@@ -61,6 +61,8 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ─── Easing helpers ──────────────────────────────────────────
 const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
@@ -140,6 +142,73 @@ scene.add(group);
 
 const restX1 = -(S + GAP) / 2;
 const restX2 =  (S + GAP) / 2;
+
+// ─── Objects mode: GLTF model geometries ────────────────────
+const MODELS = [
+    { id: 'wooden_hammer_01', file: 'wooden_hammer_01_1k.gltf' },
+    { id: 'vintage_video_camera', file: 'vintage_video_camera_1k.gltf' },
+    { id: 'SchoolDesk_01', file: 'SchoolDesk_01_1k.gltf' },
+    { id: 'rock_face_02', file: 'rock_face_02_1k.gltf' },
+    { id: 'power_box_01', file: 'power_box_01_1k.gltf' },
+    { id: 'pipe_wrench', file: 'pipe_wrench_1k.gltf' },
+    { id: 'Megaphone_01', file: 'Megaphone_01_1k.gltf' },
+    { id: 'island_tree_02', file: 'island_tree_02_1k.gltf' },
+    { id: 'Drill_01', file: 'Drill_01_1k.gltf' },
+    { id: 'desk_lamp_arm_01', file: 'desk_lamp_arm_01_1k.gltf' },
+];
+
+const gltfLoader = new GLTFLoader();
+const modelGeometries = []; // merged BufferGeometry per model
+let objectsMode = false;
+const lShapeGeo1 = g1; // original L-shape geometries
+const lShapeGeo2 = g2;
+
+function loadModel(model) {
+    const url = `assets/models/${model.id}/${model.file}`;
+    return new Promise((resolve, reject) => {
+        gltfLoader.load(url, (gltf) => {
+            const root = gltf.scene;
+            const geos = [];
+            root.updateMatrixWorld(true);
+            root.traverse(child => {
+                if (child.isMesh && child.geometry) {
+                    const geo = child.geometry.clone();
+                    geo.applyMatrix4(child.matrixWorld);
+                    geos.push(geo);
+                }
+            });
+            if (geos.length === 0) { resolve(null); return; }
+            const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos);
+            if (!merged) { resolve(null); return; }
+            // Normalize: center and scale to match L-shape size
+            merged.computeBoundingBox();
+            const box = merged.boundingBox;
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z) || 1;
+            const targetSize = S; // match L-shape overall size
+            const scale = targetSize / maxDim;
+            merged.scale(scale, scale, scale);
+            merged.computeBoundingBox();
+            const center = merged.boundingBox.getCenter(new THREE.Vector3());
+            merged.translate(-center.x, -center.y, -center.z);
+            merged.computeVertexNormals();
+            resolve({ id: model.id, geometry: merged });
+        }, undefined, (err) => {
+            console.warn(`Failed to load model ${model.id}:`, err);
+            resolve(null);
+        });
+    });
+}
+
+function swapRightToObject() {
+    if (modelGeometries.length === 0) return;
+    const geo = modelGeometries[Math.floor(Math.random() * modelGeometries.length)];
+    mesh2.geometry = geo.geometry;
+}
+
+function restoreLShapes() {
+    mesh2.geometry = lShapeGeo2;
+}
 
 // ─── Reset helpers ──────────────────────────────────────────
 function resetMesh(m, rx) {
@@ -959,12 +1028,19 @@ function switchTo(idx) {
     if (currentLookIdx < 0) currentLookIdx = 0;
 
     applyLookTransition(defaultLook);
+
+    // Objects mode: randomly swap right shape to a 3D model
+    if (objectsMode && modelGeometries.length > 0) {
+        swapRightToObject();
+    }
+
     updateUI();
 }
 
 // ─── Typography overlay ──────────────────────────────────────
 const typoCvs = document.getElementById('typo');
 const typoC = typoCvs.getContext('2d');
+let typoVisible = true;
 
 function resizeTypoCvs() {
     typoCvs.width = innerWidth * devicePixelRatio;
@@ -1320,6 +1396,13 @@ function startCineShot() {
     mesh1.visible = cineShot.showM1;
     mesh2.visible = cineShot.showM2;
 
+    // Objects mode: swap right shape to a random 3D model
+    if (objectsMode && modelGeometries.length > 0) {
+        swapRightToObject();
+    } else if (!objectsMode) {
+        restoreLShapes();
+    }
+
     // Camera starts from current position (no jump) — startPos is already camera.position
     camera.lookAt(cineShot.lookAtStart);
 }
@@ -1413,10 +1496,20 @@ addEventListener('keydown', (e) => {
             fillLight.intensity = lightTarget.fill;
             rimLight.intensity = lightTarget.rim;
         }
+    } else if (e.key === 'o' || e.key === 'O') {
+        objectsMode = !objectsMode;
+        if (!objectsMode) restoreLShapes();
+    } else if (e.key === 'Enter') {
+        typoVisible = !typoVisible;
+        typoCvs.style.display = typoVisible ? '' : 'none';
     } else if (e.key === ' ') {
         e.preventDefault();
         toggleCinematic();
     }
+});
+
+addEventListener('click', () => {
+    if (cinematicMode) toggleCinematic();
 });
 
 addEventListener('resize', () => {
@@ -1445,6 +1538,12 @@ Promise.all([
     loadTex('patRain', 'assets/patterns/Frame 2147220433.png', { wrap: true }),
     loadTex('patDiag', 'assets/patterns/Frame 2147220434.png', { wrap: true }),
 ]).then(() => {
+    // Load 3D models in background (non-blocking)
+    Promise.all(MODELS.map(m => loadModel(m))).then(results => {
+        results.forEach(r => { if (r) modelGeometries.push(r); });
+        console.log(`Loaded ${modelGeometries.length} object models`);
+    });
+
     // Build materials and looks after textures are ready
     buildLooks();
     LOOK_KEYS = Object.keys(LOOKS);
@@ -1499,6 +1598,9 @@ Promise.all([
 
     // Hide loader
     document.getElementById('loader').classList.add('done');
+
+    // Start in cinematic mode by default
+    toggleCinematic();
 
     // ─── Render loop ────────────────────────────────────────
     (function loop(now) {
