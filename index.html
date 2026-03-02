@@ -1179,7 +1179,7 @@ function updateTypo(now) {
         const focus = t * (n - 1);
         const sigma = 1.1;
 
-        const baseFs = Math.round(Math.min(w * 0.048, 48));
+        const baseFs = Math.round(w < 600 ? Math.max(w * 0.065, 22) : Math.min(w * 0.048, 48));
 
         let alpha = t < 0.08 ? t / 0.08 : t > 0.88 ? (1 - t) / 0.12 : 1;
         alpha *= 0.9;
@@ -1211,7 +1211,11 @@ function updateTypo(now) {
     // ── Bleed: massive word with type-on reveal ───────────────
     else if (s.fn === 'bleed') {
         const text = s.text;
-        const fs = Math.min(w * 0.28, 300);
+        let fs = Math.min(w * 0.28, 300);
+        // Scale down if text would overflow viewport
+        typoC.font = `700 ${fs}px Satoshi, sans-serif`;
+        const measured = typoC.measureText(text).width;
+        if (measured > w * 0.95) fs = Math.round(fs * (w * 0.95) / measured);
         typoC.font = `700 ${fs}px Satoshi, sans-serif`;
         typoC.textAlign = 'center';
         typoC.textBaseline = 'middle';
@@ -1266,7 +1270,8 @@ function updateTypo(now) {
 let cinematicMode = false;
 let cineShot = null;
 let cineShotStart = 0;
-const defaultCamPos = new THREE.Vector3(2, 4, 14);
+const _defaultZ = innerWidth / innerHeight < 1 ? 14 * (innerHeight / innerWidth) : 14;
+const defaultCamPos = new THREE.Vector3(2, 4, Math.min(_defaultZ, 30));
 
 function getCineProgress() {
     let elapsed = 0;
@@ -1289,6 +1294,10 @@ function makeCineShot() {
     const p = getCineProgress();
     const w = p > 0.75 ? (p - 0.75) / 0.25 : 0; // widen factor 0→1
 
+    // Push camera further back on portrait/narrow screens (horizontal FOV shrinks fast)
+    const aspect = innerWidth / innerHeight;
+    const portraitMul = Math.max(1, 2.0 / aspect); // ~4.3x on iPhone portrait
+
     // Start from current camera position for continuity
     let startPos = camera.position.clone();
 
@@ -1297,9 +1306,10 @@ function makeCineShot() {
     const isStatic = shotRoll < 0.20;
     const isWide = shotRoll >= 0.20 && shotRoll < 0.40;
 
-    // Distance ranges — wide shots pull further back
-    const minD = isWide ? lerp(12, 16, w) : lerp(5, 9, w);
-    const maxD = isWide ? lerp(18, 24, w) : lerp(8, 16, w);
+    // Distance ranges — scaled for portrait, wide shots use sqrt to avoid going too far
+    const wideMul = Math.max(1, Math.sqrt(portraitMul));
+    const minD = isWide ? lerp(12, 16, w) * wideMul : lerp(5, 9, w) * portraitMul;
+    const maxD = isWide ? lerp(18, 24, w) * wideMul : lerp(8, 16, w) * portraitMul;
     const d2 = minD + Math.random() * (maxD - minD);
 
     // Derive current angle from camera position, then sweep from there
