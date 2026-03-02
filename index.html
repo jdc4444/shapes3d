@@ -1,0 +1,1606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D L-Shapes — Animation Reel</title>
+    <style>
+        @font-face {
+            font-family: 'Satoshi';
+            src: url('assets/satoshi/Satoshi-Medium.otf') format('opentype');
+            font-weight: 500;
+        }
+        @font-face {
+            font-family: 'Satoshi';
+            src: url('assets/satoshi/Satoshi-Bold.otf') format('opentype');
+            font-weight: 700;
+        }
+        * { margin: 0; padding: 0; }
+        body { overflow: hidden; background: #000; font-family: 'Satoshi', -apple-system, system-ui, sans-serif; }
+        #label {
+            position: fixed; bottom: 28px; left: 0; right: 0;
+            text-align: center; color: #bbb; font-size: 13px;
+            letter-spacing: 0.08em; text-transform: uppercase;
+            pointer-events: none; transition: opacity 0.4s, color 0.5s;
+            font-weight: 500;
+        }
+        #dots {
+            position: fixed; bottom: 12px; left: 0; right: 0;
+            text-align: center; pointer-events: none;
+        }
+        #dots span {
+            display: inline-block; width: 6px; height: 6px;
+            border-radius: 50%; background: #ddd; margin: 0 3px;
+            transition: background 0.5s, transform 0.3s;
+        }
+        #dots span.active { background: #888; transform: scale(1.4); }
+        #loader {
+            position: fixed; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: #000; color: #F5F0EB;
+            font-family: 'Satoshi', -apple-system, sans-serif;
+            font-size: 14px; letter-spacing: 0.15em;
+            text-transform: uppercase; z-index: 100;
+            transition: opacity 0.8s;
+        }
+        #loader.done { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+<div id="loader">Loading</div>
+<div id="label"></div>
+<div id="dots"></div>
+<canvas id="typo" style="position:fixed;inset:0;pointer-events:none;z-index:10;"></canvas>
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+    }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── Easing helpers ──────────────────────────────────────────
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+const easeOut = t => 1 - Math.pow(1-t, 3);
+const bounce = t => {
+    const n1=7.5625, d1=2.75;
+    if(t<1/d1) return n1*t*t;
+    if(t<2/d1) return n1*(t-=1.5/d1)*t+.75;
+    if(t<2.5/d1) return n1*(t-=2.25/d1)*t+.9375;
+    return n1*(t-=2.625/d1)*t+.984375;
+};
+const spring = t => 1 - Math.cos(t * Math.PI * 2.5) * Math.exp(-6 * t);
+const smoothPing = t => Math.sin(t * Math.PI);
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ─── Scene setup ─────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(2, 4, 14);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.target.set(0, 0, 0);
+
+// ─── Lighting ────────────────────────────────────────────────
+const ambientLight = new THREE.AmbientLight(0xfff8f0, 1.0);
+scene.add(ambientLight);
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+keyLight.position.set(5, 10, 8);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+fillLight.position.set(-6, 3, -4);
+scene.add(fillLight);
+const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+rimLight.position.set(0, -3, -6);
+scene.add(rimLight);
+
+const LIGHT_PRESETS = {
+    default: { ambient: 1.0, key: 1.8, fill: 0.6, rim: 0.4 },
+    dark:    { ambient: 0.8, key: 2.4, fill: 0.3, rim: 1.0 },
+    mask:    { ambient: 0.3, key: 0.5, fill: 0.2, rim: 0.1 }
+};
+
+// ─── Shape geometry (exact proportions from cv2 analysis) ────
+const T = 2, S = 2*T, B = 0.15*T, depth = T;
+const GAP = 0.096 * S;
+const extrudeOpts = { depth, bevelEnabled: false };
+const defaultMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.65, metalness: 0.0 });
+
+const s1 = new THREE.Shape();
+s1.moveTo(0,T); s1.lineTo(0,S); s1.lineTo(S,S); s1.lineTo(S,0); s1.lineTo(T,0); s1.lineTo(T,T);
+const g1 = new THREE.ExtrudeGeometry(s1, extrudeOpts);
+g1.center();
+const mesh1 = new THREE.Mesh(g1, defaultMat);
+
+const s2 = new THREE.Shape();
+s2.moveTo(0,0); s2.lineTo(0,S); s2.lineTo(S,S); s2.lineTo(S,T); s2.lineTo(T,T); s2.lineTo(T,0);
+const hole = new THREE.Path();
+hole.moveTo(B,B); hole.lineTo(T-B,B); hole.lineTo(T-B,T+B); hole.lineTo(S-B,T+B); hole.lineTo(S-B,S-B); hole.lineTo(B,S-B);
+s2.holes.push(hole);
+const g2 = new THREE.ExtrudeGeometry(s2, extrudeOpts);
+g2.center();
+const mesh2 = new THREE.Mesh(g2, defaultMat);
+
+const group = new THREE.Group();
+group.add(mesh1);
+group.add(mesh2);
+scene.add(group);
+
+const restX1 = -(S + GAP) / 2;
+const restX2 =  (S + GAP) / 2;
+
+// ─── Reset helpers ──────────────────────────────────────────
+function resetMesh(m, rx) {
+    m.position.set(rx, 0, 0);
+    m.rotation.set(0, 0, 0);
+    m.scale.set(1, 1, 1);
+}
+function resetAll() {
+    resetMesh(mesh1, restX1);
+    resetMesh(mesh2, restX2);
+    group.position.set(0, 0, 0);
+    group.rotation.set(0, 0, 0);
+    group.scale.set(1, 1, 1);
+}
+
+// ─── 36 Animations (mesh/group transforms only) ─────────────
+
+function animOrbit(t) {
+    resetAll();
+    group.rotation.y = t * Math.PI * 2;
+}
+
+function animAssemble(t) {
+    resetAll();
+    const s = spring(Math.min(t * 1.4, 1));
+    mesh1.position.x = lerp(-10, restX1, s);
+    mesh2.position.x = lerp(10, restX2, s);
+    if (t > 0.7) {
+        const e = ease((t - 0.7) / 0.3);
+        group.position.y = Math.sin(e * Math.PI) * 0.3;
+    }
+}
+
+function animBreathe(t) {
+    resetAll();
+    const s1s = 1 + 0.08 * Math.sin(t * Math.PI * 2);
+    const s2s = 1 + 0.08 * Math.sin(t * Math.PI * 2 + 0.5);
+    mesh1.scale.set(s1s, s1s, s1s);
+    mesh2.scale.set(s2s, s2s, s2s);
+    group.rotation.y = Math.sin(t * Math.PI * 2) * 0.15;
+}
+
+function animCounterSpin(t) {
+    resetAll();
+    const angle = ease(t) * Math.PI * 2;
+    mesh1.rotation.y = angle;
+    mesh2.rotation.y = -angle;
+}
+
+function animFloat(t) {
+    resetAll();
+    mesh1.position.y = Math.sin(t * Math.PI * 4) * 0.8;
+    mesh2.position.y = Math.sin(t * Math.PI * 4 + Math.PI * 0.5) * 0.8;
+    mesh1.rotation.z = Math.sin(t * Math.PI * 4) * 0.1;
+    mesh2.rotation.z = Math.sin(t * Math.PI * 4 + Math.PI * 0.5) * -0.1;
+    group.rotation.y = t * 0.4;
+}
+
+function animExplode(t) {
+    resetAll();
+    let d;
+    if (t < 0.4) d = easeOut(t / 0.4);
+    else if (t < 0.6) d = 1;
+    else d = 1 - ease((t - 0.6) / 0.4);
+    mesh1.position.x = restX1 - d * 3;
+    mesh1.position.y = d * 2;
+    mesh1.rotation.z = d * 0.35;
+    mesh2.position.x = restX2 + d * 3;
+    mesh2.position.y = -d * 1.5;
+    mesh2.rotation.z = -d * 0.3;
+}
+
+function animCascade(t) {
+    resetAll();
+    const t1 = Math.max(0, Math.min(t * 2.5, 1));
+    const t2 = Math.max(0, Math.min((t - 0.15) * 2.5, 1));
+    mesh1.position.y = lerp(8, 0, bounce(t1));
+    mesh2.position.y = lerp(8, 0, bounce(t2));
+    mesh1.rotation.x = (1 - bounce(t1)) * -0.4;
+    mesh2.rotation.x = (1 - bounce(t2)) * -0.4;
+    if (t > 0.6) {
+        const rest = (t - 0.6) / 0.4;
+        group.rotation.y = Math.sin(rest * Math.PI * 2) * 0.12;
+    }
+}
+
+function animPivot(t) {
+    resetAll();
+    const angle = smoothPing(t) * Math.PI * 0.35;
+    mesh1.rotation.y = angle;
+    mesh2.rotation.y = -angle;
+}
+
+function animWave(t) {
+    resetAll();
+    mesh1.rotation.z = Math.sin(t * Math.PI * 4) * 0.25;
+    mesh2.rotation.z = Math.sin(t * Math.PI * 4 + Math.PI * 0.5) * 0.25;
+    mesh1.rotation.x = Math.cos(t * Math.PI * 4) * 0.12;
+    mesh2.rotation.x = Math.cos(t * Math.PI * 4 + Math.PI * 0.5) * 0.12;
+    group.rotation.y = Math.sin(t * Math.PI * 2) * 0.3;
+}
+
+function animDolly(t) {
+    resetAll();
+    const d = smoothPing(t);
+    const s = lerp(1, 1.5, d);
+    group.scale.set(s, s, s);
+    group.rotation.y = d * 0.2;
+}
+
+function animFlip(t) {
+    resetAll();
+    const t1 = Math.max(0, Math.min(t * 1.6, 1));
+    const t2 = Math.max(0, Math.min((t - 0.12) * 1.6, 1));
+    mesh1.rotation.y = ease(t1) * Math.PI * 2;
+    mesh2.rotation.y = ease(t2) * Math.PI * 2;
+    mesh1.position.y = smoothPing(t1) * 0.6;
+    mesh2.position.y = smoothPing(t2) * 0.6;
+}
+
+function animCross(t) {
+    resetAll();
+    let progress;
+    if (t < 0.45) progress = ease(t / 0.45);
+    else if (t < 0.55) progress = 1;
+    else progress = 1 - ease((t - 0.55) / 0.45);
+    mesh1.position.x = lerp(restX1, restX2, progress);
+    mesh2.position.x = lerp(restX2, restX1, progress);
+    mesh1.position.z = smoothPing(progress) * 2.5;
+    mesh2.position.z = smoothPing(progress) * -2.5;
+    mesh1.rotation.y = smoothPing(progress) * 0.3;
+    mesh2.rotation.y = smoothPing(progress) * -0.3;
+}
+
+function animSpiral(t) {
+    resetAll();
+    const angle = t * Math.PI * 4;
+    const r = 1.5;
+    const rise = smoothPing(t) * 2;
+    mesh1.position.x = restX1 + Math.sin(angle) * r;
+    mesh1.position.z = Math.cos(angle) * r;
+    mesh1.position.y = rise;
+    mesh2.position.x = restX2 + Math.sin(angle + Math.PI) * r;
+    mesh2.position.z = Math.cos(angle + Math.PI) * r;
+    mesh2.position.y = rise;
+    group.rotation.y = t * Math.PI;
+}
+
+function animTilt(t) {
+    resetAll();
+    group.rotation.x = Math.sin(t * Math.PI * 2) * 0.6;
+    group.rotation.y = Math.sin(t * Math.PI) * 0.2;
+    group.position.y = Math.abs(Math.sin(t * Math.PI * 2)) * 0.4;
+}
+
+function animShuffle(t) {
+    resetAll();
+    const cycles = 3;
+    const p = ease((t * cycles) % 1);
+    const phase = Math.floor(t * cycles) % 2;
+    const swapped = phase === 1;
+    const fromL = swapped ? restX2 : restX1;
+    const toL = swapped ? restX1 : restX2;
+    const fromR = swapped ? restX1 : restX2;
+    const toR = swapped ? restX2 : restX1;
+    mesh1.position.x = lerp(fromL, toL, p);
+    mesh2.position.x = lerp(fromR, toR, p);
+    mesh1.position.z = smoothPing(p) * 2;
+    mesh2.position.z = smoothPing(p) * -2;
+    mesh1.rotation.y = smoothPing(p) * 0.2;
+    mesh2.rotation.y = smoothPing(p) * -0.2;
+}
+
+function animLevitate(t) {
+    resetAll();
+    let y;
+    if (t < 0.25) y = easeOut(t / 0.25) * 2;
+    else if (t < 0.75) { y = 2; group.rotation.y = (t - 0.25) * Math.PI * 2; }
+    else y = (1 - easeOut((t - 0.75) / 0.25)) * 2;
+    mesh1.position.y = y;
+    mesh2.position.y = y;
+    mesh1.rotation.z = Math.sin(t * Math.PI * 6) * 0.05;
+    mesh2.rotation.z = Math.sin(t * Math.PI * 6 + 1) * -0.05;
+}
+
+function animDomino(t) {
+    resetAll();
+    const t1 = Math.min(t * 2, 1);
+    const t2 = Math.max(0, Math.min((t - 0.35) * 2.5, 1));
+    mesh1.rotation.z = -ease(t1) * 0.5 * (t < 0.5 ? 1 : 1 - ease((t - 0.5) * 2));
+    mesh2.rotation.z = ease(t2) * 0.45 * (t < 0.7 ? 1 : 1 - ease((t - 0.7) * 3.3));
+    mesh1.position.y = -Math.abs(mesh1.rotation.z) * 0.5;
+    mesh2.position.y = -Math.abs(mesh2.rotation.z) * 0.5;
+}
+
+function animConverge(t) {
+    resetAll();
+    let d;
+    if (t < 0.35) d = ease(t / 0.35);
+    else if (t < 0.65) d = 1;
+    else d = 1 - ease((t - 0.65) / 0.35);
+    const touch = GAP / 2;
+    mesh1.position.x = lerp(restX1, -touch, d);
+    mesh2.position.x = lerp(restX2, touch, d);
+    group.rotation.y = d * 0.15;
+}
+
+function animRoll(t) {
+    resetAll();
+    const angle = ease(t) * Math.PI * 4;
+    mesh1.rotation.x = angle;
+    mesh2.rotation.x = -angle;
+    mesh1.position.y = Math.abs(Math.sin(angle)) * 0.3;
+    mesh2.position.y = Math.abs(Math.sin(angle)) * 0.3;
+    group.rotation.y = Math.sin(t * Math.PI * 2) * 0.15;
+}
+
+function animScatter(t) {
+    resetAll();
+    let d;
+    if (t < 0.3) d = easeOut(t / 0.3);
+    else if (t < 0.5) d = 1;
+    else d = 1 - ease((t - 0.5) / 0.5);
+    mesh1.position.x = lerp(restX1, restX1 - 4, d);
+    mesh1.position.y = lerp(0, 3, d);
+    mesh1.position.z = lerp(0, -3, d);
+    mesh1.rotation.set(d * 0.7, d * 1.2, d * -0.4);
+    mesh2.position.x = lerp(restX2, restX2 + 3, d);
+    mesh2.position.y = lerp(0, -2.5, d);
+    mesh2.position.z = lerp(0, 2, d);
+    mesh2.rotation.set(d * -0.5, d * -0.8, d * 0.6);
+}
+
+function animPendulum(t) {
+    resetAll();
+    const a1 = Math.sin(t * Math.PI * 4) * 0.35;
+    const a2 = Math.sin(t * Math.PI * 4 + Math.PI * 0.6) * 0.35;
+    mesh1.position.y = (1 - Math.cos(a1)) * 1.5;
+    mesh1.rotation.z = a1;
+    mesh1.position.x = restX1 + Math.sin(a1) * 1.5;
+    mesh2.position.y = (1 - Math.cos(a2)) * 1.5;
+    mesh2.rotation.z = a2;
+    mesh2.position.x = restX2 + Math.sin(a2) * 1.5;
+}
+
+function animZoomSpin(t) {
+    resetAll();
+    const s = 1 + smoothPing(t) * 0.6;
+    const spin = ease(t) * Math.PI * 6;
+    group.scale.set(s, s, s);
+    group.rotation.y = spin;
+    group.position.y = smoothPing(t) * 0.5;
+}
+
+function animSeesaw(t) {
+    resetAll();
+    const osc = Math.sin(t * Math.PI * 4);
+    mesh1.position.y = osc * 1.5;
+    mesh2.position.y = -osc * 1.5;
+    mesh1.rotation.z = osc * 0.08;
+    mesh2.rotation.z = -osc * 0.08;
+    group.rotation.y = Math.sin(t * Math.PI * 2) * 0.2;
+}
+
+function animRise(t) {
+    resetAll();
+    let d1, d2;
+    if (t < 0.5) {
+        d1 = spring(Math.min(t * 2.5, 1));
+        d2 = spring(Math.max(0, Math.min((t - 0.1) * 2.5, 1)));
+    } else {
+        const t2 = (t - 0.5) * 2;
+        d1 = 1 - ease(Math.min(t2 * 1.5, 1));
+        d2 = 1 - ease(Math.max(0, Math.min((t2 - 0.08) * 1.5, 1)));
+    }
+    mesh1.position.y = lerp(-8, 0, d1);
+    mesh2.position.y = lerp(-8, 0, d2);
+    mesh1.rotation.x = (1 - d1) * 0.3;
+    mesh2.rotation.x = (1 - d2) * 0.3;
+}
+
+function animOrbitX(t) {
+    resetAll();
+    group.rotation.x = t * Math.PI * 2;
+    group.rotation.y = Math.sin(t * Math.PI * 2) * 0.15;
+}
+
+function animStaggerSpin(t) {
+    resetAll();
+    const t1 = t;
+    const t2 = (t + 0.5) % 1;
+    mesh1.rotation.y = ease(t1) * Math.PI * 2;
+    mesh2.rotation.y = ease(t2) * Math.PI * 2;
+    mesh1.position.y = smoothPing(t1) * 0.4;
+    mesh2.position.y = smoothPing(t2) * 0.4;
+}
+
+function animOrbitZ(t) {
+    resetAll();
+    const angle = t * Math.PI * 2;
+    const r = 1.2;
+    mesh1.position.x = restX1 + Math.cos(angle) * r;
+    mesh1.position.y = Math.sin(angle) * r;
+    mesh2.position.x = restX2 + Math.cos(angle + Math.PI) * r;
+    mesh2.position.y = Math.sin(angle + Math.PI) * r;
+    mesh1.rotation.z = angle;
+    mesh2.rotation.z = angle + Math.PI;
+}
+
+function animPulse(t) {
+    resetAll();
+    const beats = 4;
+    const phase = (t * beats) % 1;
+    const hit = Math.exp(-phase * 8);
+    const beat = Math.floor(t * beats) % 2;
+    if (beat === 0) {
+        mesh1.scale.set(1 + hit * 0.25, 1 + hit * 0.25, 1 + hit * 0.25);
+    } else {
+        mesh2.scale.set(1 + hit * 0.25, 1 + hit * 0.25, 1 + hit * 0.25);
+    }
+    group.rotation.y = t * 0.5;
+}
+
+function animWiper(t) {
+    resetAll();
+    const a = Math.sin(t * Math.PI * 2) * 0.5;
+    mesh1.rotation.z = a;
+    mesh1.position.x = restX1 + Math.sin(a) * S * 0.3;
+    mesh1.position.y = (1 - Math.cos(a)) * S * 0.3;
+    mesh2.rotation.z = -a;
+    mesh2.position.x = restX2 - Math.sin(a) * S * 0.3;
+    mesh2.position.y = (1 - Math.cos(a)) * S * 0.3;
+}
+
+function animBreatheDeep(t) {
+    resetAll();
+    const s = 1 + smoothPing(t) * 0.3;
+    group.scale.set(s, s, s);
+    mesh1.rotation.z = smoothPing(t) * 0.12;
+    mesh2.rotation.z = smoothPing(t) * -0.12;
+    group.rotation.y = smoothPing(t) * 0.25;
+}
+
+function animTypewriter(t) {
+    resetAll();
+    let d1, d2;
+    if (t < 0.5) {
+        d1 = spring(Math.min(t * 3, 1));
+        d2 = spring(Math.max(0, Math.min((t - 0.2) * 3, 1)));
+    } else {
+        const r = (t - 0.5) * 2;
+        d1 = 1 - ease(Math.max(0, Math.min((r - 0.1) * 2, 1)));
+        d2 = 1 - ease(Math.min(r * 2, 1));
+    }
+    mesh1.position.x = lerp(-12, restX1, d1);
+    mesh2.position.x = lerp(-12, restX2, d2);
+}
+
+function animGlitch(t) {
+    resetAll();
+    const freq = 30;
+    const jitter = (seed) => Math.sin(seed * freq + t * freq * 6.28) * 0.3;
+    const intense = smoothPing(t);
+    mesh1.position.x = restX1 + jitter(1.1) * intense;
+    mesh1.position.y = jitter(2.3) * intense;
+    mesh1.rotation.z = jitter(3.7) * 0.15 * intense;
+    mesh2.position.x = restX2 + jitter(4.2) * intense;
+    mesh2.position.y = jitter(5.8) * intense;
+    mesh2.rotation.z = jitter(6.1) * 0.15 * intense;
+}
+
+function animFan(t) {
+    resetAll();
+    const angle = smoothPing(t) * 0.7;
+    mesh1.position.x = restX1 * Math.cos(angle);
+    mesh1.position.y = restX1 * -Math.sin(angle);
+    mesh1.rotation.z = -angle;
+    mesh2.position.x = restX2 * Math.cos(angle);
+    mesh2.position.y = restX2 * Math.sin(angle);
+    mesh2.rotation.z = angle;
+}
+
+function animShear(t) {
+    resetAll();
+    const s = Math.sin(t * Math.PI * 2);
+    group.rotation.y = s * 0.4;
+    group.rotation.z = s * 0.15;
+    mesh1.position.y = s * 0.5;
+    mesh2.position.y = -s * 0.5;
+    group.position.x = s * 0.3;
+}
+
+function animMirror(t) {
+    resetAll();
+    const rx = Math.sin(t * Math.PI * 3) * 0.4;
+    const ry = Math.cos(t * Math.PI * 2) * 0.5;
+    const rz = Math.sin(t * Math.PI * 4) * 0.15;
+    mesh1.rotation.set(rx, ry, rz);
+    mesh2.rotation.set(-rx, -ry, -rz);
+    mesh1.position.y = Math.sin(t * Math.PI * 2) * 0.3;
+    mesh2.position.y = -Math.sin(t * Math.PI * 2) * 0.3;
+}
+
+function animCarousel(t) {
+    resetAll();
+    const angle = t * Math.PI * 2;
+    const r = 3;
+    mesh1.position.x = Math.sin(angle) * r;
+    mesh1.position.z = Math.cos(angle) * r - 1;
+    mesh2.position.x = Math.sin(angle + Math.PI) * r;
+    mesh2.position.z = Math.cos(angle + Math.PI) * r - 1;
+    mesh1.rotation.y = angle + Math.PI * 0.5;
+    mesh2.rotation.y = angle + Math.PI * 1.5;
+}
+
+// ─── Texture loading ────────────────────────────────────────
+const texLoader = new THREE.TextureLoader();
+const TEXTURES = {};
+
+function loadTex(key, path, opts = {}) {
+    return new Promise((resolve, reject) => {
+        texLoader.load(path, (tex) => {
+            tex.colorSpace = THREE.SRGBColorSpace;
+            if (opts.wrap) {
+                tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            }
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            TEXTURES[key] = tex;
+            resolve(tex);
+        }, undefined, reject);
+    });
+}
+
+// ─── Material factories ─────────────────────────────────────
+
+const screenMaskVert = `
+    varying vec4 vScreenPos;
+    varying vec3 vWorldNormal;
+    void main() {
+        vec4 mvp = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vScreenPos = mvp;
+        vWorldNormal = normalize(normalMatrix * normal);
+        gl_Position = mvp;
+    }
+`;
+
+const screenMaskFrag = `
+    uniform sampler2D map;
+    uniform float useShading;
+    varying vec4 vScreenPos;
+    varying vec3 vWorldNormal;
+    void main() {
+        vec2 ndc = vScreenPos.xy / vScreenPos.w;
+        vec2 uv = ndc * 0.5 + 0.5;
+        vec3 tex = texture2D(map, uv).rgb;
+        float facing = abs(dot(normalize(vWorldNormal), vec3(0.0, 0.0, 1.0)));
+        float shade = mix(0.45, 1.0, facing);
+        shade = mix(1.0, shade, useShading);
+        gl_FragColor = vec4(tex * shade, 1.0);
+    }
+`;
+
+const patternMaskFrag = `
+    uniform sampler2D map;
+    uniform vec3 baseColor;
+    uniform float useShading;
+    varying vec4 vScreenPos;
+    varying vec3 vWorldNormal;
+    void main() {
+        vec2 ndc = vScreenPos.xy / vScreenPos.w;
+        vec2 uv = ndc * 0.5 + 0.5;
+        float lum = texture2D(map, uv * 5.0).r;
+        vec3 col = baseColor * (0.55 + 0.45 * lum);
+        float facing = abs(dot(normalize(vWorldNormal), vec3(0.0, 0.0, 1.0)));
+        float shade = mix(0.4, 1.0, facing);
+        shade = mix(1.0, shade, useShading);
+        gl_FragColor = vec4(col * shade, 1.0);
+    }
+`;
+
+function createSolidMaterial(color) {
+    return new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.0 });
+}
+
+function createScreenMaskMaterial(texKey) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: TEXTURES[texKey] },
+            useShading: { value: 1.0 }
+        },
+        vertexShader: screenMaskVert,
+        fragmentShader: screenMaskFrag
+    });
+}
+
+function createPatternMaskMaterial(patKey, brandColor) {
+    const c = new THREE.Color(brandColor);
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: TEXTURES[patKey] },
+            baseColor: { value: new THREE.Vector3(c.r, c.g, c.b) },
+            useShading: { value: 1.0 }
+        },
+        vertexShader: screenMaskVert,
+        fragmentShader: patternMaskFrag
+    });
+}
+
+// UV texture materials removed — screen-space masks avoid stretching on L-shapes
+
+// ─── Look system ────────────────────────────────────────────
+let LOOKS = {};
+const MATERIALS_CACHE = {};
+
+function buildLooks() {
+    const M = MATERIALS_CACHE;
+    // Solid
+    M.solidCarbon = createSolidMaterial(0x000000);
+    M.solidVolt = createSolidMaterial(0x8CF000);
+    M.solidTan = createSolidMaterial(0xF5F0EB);
+    M.solidWhite = createSolidMaterial(0xFFFFFF);
+    M.solidTan4 = createSolidMaterial(0x8E867E);   // Tan mid
+    M.solidVolt3 = createSolidMaterial(0x328200);   // Volt dark
+    // Screen-space masks
+    M.maskHolo1 = createScreenMaskMaterial('holo1');
+    M.maskHolo2 = createScreenMaskMaterial('holo2');
+    M.maskHolo3 = createScreenMaskMaterial('holo3');
+    M.maskHolo4 = createScreenMaskMaterial('holo4');
+    M.maskNeon1 = createScreenMaskMaterial('neon1');
+    M.maskNeon2 = createScreenMaskMaterial('neon2');
+    M.maskNeon3 = createScreenMaskMaterial('neon3');
+    M.maskNeon4 = createScreenMaskMaterial('neon4');
+    M.maskGlass1 = createScreenMaskMaterial('glass1');
+    M.maskGlass2 = createScreenMaskMaterial('glass2');
+    M.maskGlass3 = createScreenMaskMaterial('glass3');
+    M.maskGlass4 = createScreenMaskMaterial('glass4');
+    // Pattern masks
+    M.patDotsVolt = createPatternMaskMaterial('patDots', 0x8CF000);
+    M.patDiagTan = createPatternMaskMaterial('patDiag', 0xF5F0EB);
+    M.patRainWhite = createPatternMaskMaterial('patRain', 0xFFFFFF);
+    M.patStripesVolt = createPatternMaskMaterial('patStripes', 0x8CF000);
+    M.patDotsWhite = createPatternMaskMaterial('patDots', 0xFFFFFF);
+    M.patStripesCarbon = createPatternMaskMaterial('patStripes', 0x333333);
+    // Additional screen-space masks for variety
+    M.maskNeon1Alt = createScreenMaskMaterial('neon1');
+    M.maskGlass3Alt = createScreenMaskMaterial('glass3');
+
+    // More pattern material combos
+    M.patDiagVolt = createPatternMaskMaterial('patDiag', 0x8CF000);
+    M.patRainVolt = createPatternMaskMaterial('patRain', 0x8CF000);
+    M.patDotsCarbon = createPatternMaskMaterial('patDots', 0x333333);
+    M.patDiagCarbon = createPatternMaskMaterial('patDiag', 0x333333);
+    M.patStripesWhite = createPatternMaskMaterial('patStripes', 0xFFFFFF);
+    M.patRainCarbon = createPatternMaskMaterial('patRain', 0x333333);
+
+    LOOKS = {
+        // ── A. Both solid (same) ────────────────────────────
+        carbonOnWhite:   { mat1: M.solidCarbon, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'default' },
+        voltOnCarbon:    { mat1: M.solidVolt, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
+        tanOnCarbon:     { mat1: M.solidTan, mat2: M.solidTan, bg: 0x000000, lighting: 'dark' },
+        whiteOnCarbon:   { mat1: M.solidWhite, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
+
+        // ── B. Both screen-masked (same texture) ────────────
+        holoMask1:       { mat1: M.maskHolo1, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
+        holoMask2:       { mat1: M.maskHolo2, mat2: M.maskHolo2, bg: 0xF5F0EB, lighting: 'mask' },
+        glassMask1:      { mat1: M.maskGlass1, mat2: M.maskGlass1, bg: 0xFFFFFF, lighting: 'mask' },
+        neonMask1:       { mat1: M.maskNeon1, mat2: M.maskNeon1, bg: 0x000000, lighting: 'mask' },
+
+        // ── C. Both screen-masked (different textures!) ─────
+        holoNeonSplit:   { mat1: M.maskHolo1, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
+        holoGlassSplit:  { mat1: M.maskHolo3, mat2: M.maskGlass3, bg: 0xF5F0EB, lighting: 'mask' },
+        neonNeonSplit:   { mat1: M.maskNeon1, mat2: M.maskNeon4, bg: 0x000000, lighting: 'mask' },
+        glassGlassSplit: { mat1: M.maskGlass1, mat2: M.maskGlass4, bg: 0xFFFFFF, lighting: 'mask' },
+        holoHoloSplit:   { mat1: M.maskHolo2, mat2: M.maskHolo4, bg: 0x000000, lighting: 'mask' },
+
+        // ── D. One masked, one solid ────────────────────────
+        holoVsSolid:     { mat1: M.maskHolo1, mat2: M.solidCarbon, bg: 0x000000, lighting: 'mask' },
+        neonVsVolt:      { mat1: M.solidVolt, mat2: M.maskNeon3, bg: 0x000000, lighting: 'dark' },
+        glassVsCarbon:   { mat1: M.maskGlass2, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'mask' },
+        solidVsNeon:     { mat1: M.solidWhite, mat2: M.maskNeon1, bg: 0x000000, lighting: 'dark' },
+        tanVsHolo:       { mat1: M.solidTan, mat2: M.maskHolo4, bg: 0x000000, lighting: 'dark' },
+
+        // ── E. Dual-mask (two different screen-space textures) ─
+        uvHoloBoth:      { mat1: M.maskHolo3, mat2: M.patDotsVolt, bg: 0x000000, lighting: 'mask' },
+        uvGlassBoth:     { mat1: M.maskGlass2, mat2: M.patDiagTan, bg: 0xFFFFFF, lighting: 'mask' },
+
+        // ── F. Screen-masked + solid ────────────────────────
+        uvHoloVsCarbon:  { mat1: M.maskHolo2, mat2: M.solidCarbon, bg: 0x000000, lighting: 'mask' },
+        uvGlassVsVolt:   { mat1: M.maskGlass3Alt, mat2: M.solidVolt, bg: 0xF5F0EB, lighting: 'mask' },
+        uvNeonVsWhite:   { mat1: M.solidWhite, mat2: M.maskNeon1Alt, bg: 0x000000, lighting: 'dark' },
+
+        // ── G. Pattern + screen-masked ──────────────────────
+        uvHoloVsMaskNeon:  { mat1: M.patStripesVolt, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
+        maskGlassVsUvHolo: { mat1: M.maskGlass1, mat2: M.maskHolo2, bg: 0xFFFFFF, lighting: 'mask' },
+
+        // ── H. Pattern + solid ──────────────────────────────
+        dotVoltVsCarbon:   { mat1: M.patDotsVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+        stripesTanVsWhite: { mat1: M.solidWhite, mat2: M.patDiagTan, bg: 0x000000, lighting: 'dark' },
+        stripesWhiteVsVolt:{ mat1: M.patStripesWhite, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
+        diagVoltVsWhite:   { mat1: M.patDiagVolt, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
+        rainVoltVsCarbon:  { mat1: M.patRainVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+
+        // ── I. Pattern + masked ─────────────────────────────
+        patVsHolo:       { mat1: M.patDotsWhite, mat2: M.maskHolo3, bg: 0x000000, lighting: 'mask' },
+        patVsNeon:       { mat1: M.patStripesVolt, mat2: M.maskNeon4, bg: 0x000000, lighting: 'mask' },
+
+        // ── J. Pattern both ─────────────────────────────────
+        dotVolt:         { mat1: M.patDotsVolt, mat2: M.patDotsVolt, bg: 0x000000, lighting: 'mask' },
+        rainWhite:       { mat1: M.patRainWhite, mat2: M.patRainWhite, bg: 0x000000, lighting: 'mask' },
+        diagVoltBoth:    { mat1: M.patDiagVolt, mat2: M.patDiagVolt, bg: 0x000000, lighting: 'mask' },
+        stripesVoltBoth: { mat1: M.patStripesVolt, mat2: M.patStripesVolt, bg: 0x000000, lighting: 'mask' },
+
+    };
+}
+
+// ─── Animation-to-Look mapping ──────────────────────────────
+const ANIM_LOOKS = [
+    'carbonOnWhite',       // 0  Orbit           — classic
+    'holoVsSolid',         // 1  Assemble         — masked L flies in, solid frame meets it
+    'uvGlassBoth',         // 2  Breathe          — UV glass texture pulses with scale
+    'holoNeonSplit',       // 3  Counter-Spin     — holo left spins vs neon right
+    'dotVoltVsCarbon',     // 4  Float            — patterned solid + plain solid bob
+    'neonMask1',           // 5  Explode          — both neon-masked explode apart
+    'glassVsCarbon',       // 6  Cascade          — glass-masked frame + carbon solid drop
+    'tanVsHolo',           // 7  Pivot            — tan solid + holo masked pivot
+    'holoGlassSplit',      // 8  Wave             — holo on one, glass on other, rocking
+    'uvHoloVsCarbon',      // 9  Dolly            — UV textured + solid zoom in/out
+    'neonVsVolt',          // 10 Flip             — volt solid + neon masked flip
+    'holoMask1',           // 11 Cross            — both holo-masked cross paths
+    'uvHoloVsMaskNeon',    // 12 Spiral           — UV holo + screen neon spiral
+    'patVsHolo',           // 13 Tilt             — dot pattern + holo mask tilt
+    'voltOnCarbon',        // 14 Shuffle          — bold volt solid rapid swap
+    'glassMask1',          // 15 Levitate         — both glass-masked levitate
+    'stripesTanVsWhite',   // 16 Domino           — white solid + tan stripes tip
+    'solidVsNeon',         // 17 Converge         — white shape meets neon-masked shape
+    'holoHoloSplit',       // 18 Roll             — two different holos rolling
+    'neonNeonSplit',       // 19 Scatter          — two different neons scatter
+    'whiteOnCarbon',       // 20 Pendulum         — clean white swing
+    'patVsNeon',           // 21 Zoom Spin        — striped volt + neon masked spin
+    'rainWhite',           // 22 Seesaw           — both rain-patterned seesaw
+    'uvGlassVsVolt',       // 23 Rise             — UV glass + volt solid rise
+    'holoMask2',           // 24 Orbit X          — both holo-masked on tan bg
+    'uvNeonVsWhite',       // 25 Stagger Spin     — white solid + UV neon spin
+    'glassGlassSplit',     // 26 Orbit Z          — two glass textures orbit each other
+    'uvHoloBoth',          // 27 Pulse            — UV holo texture on both, pulsing
+    'tanOnCarbon',         // 28 Wiper            — tan solid wiper motion
+    'dotVolt',             // 29 Breathe Deep     — both dot-patterned breathe
+    'maskGlassVsUvHolo',   // 30 Typewriter       — glass masked + UV holo slide in
+    'neonVsVolt',          // 31 Glitch           — volt vs neon jitter
+    'holoVsSolid',         // 32 Fan              — holo masked + solid fan open/close
+    'dotVoltVsCarbon',     // 33 Shear            — patterned + solid shear
+    'holoNeonSplit',       // 34 Mirror           — holo vs neon mirror rotations
+    'glassVsCarbon',       // 35 Carousel         — glass-masked + carbon carousel
+];
+
+// ─── Sequencer ──────────────────────────────────────────────
+const NAMES = [
+    'Orbit', 'Assemble', 'Breathe', 'Counter-Spin',
+    'Float', 'Explode', 'Cascade', 'Pivot',
+    'Wave', 'Dolly', 'Flip', 'Cross',
+    'Spiral', 'Tilt', 'Shuffle', 'Levitate',
+    'Domino', 'Converge', 'Roll', 'Scatter',
+    'Pendulum', 'Zoom Spin', 'Seesaw', 'Rise',
+    'Orbit X', 'Stagger Spin', 'Orbit Z', 'Pulse',
+    'Wiper', 'Breathe Deep', 'Typewriter', 'Glitch',
+    'Fan', 'Shear', 'Mirror', 'Carousel'
+];
+const anims = [
+    animOrbit, animAssemble, animBreathe, animCounterSpin,
+    animFloat, animExplode, animCascade, animPivot,
+    animWave, animDolly, animFlip, animCross,
+    animSpiral, animTilt, animShuffle, animLevitate,
+    animDomino, animConverge, animRoll, animScatter,
+    animPendulum, animZoomSpin, animSeesaw, animRise,
+    animOrbitX, animStaggerSpin, animOrbitZ, animPulse,
+    animWiper, animBreatheDeep, animTypewriter, animGlitch,
+    animFan, animShear, animMirror, animCarousel
+];
+
+const BASE_DURATION = 5000;
+const duration = BASE_DURATION / 0.5; // 50% speed baseline
+const TRANSITION = 500;
+let currentIdx = 0;
+let switchTime = performance.now();
+let prevIdx = -1;
+
+// ─── Look transition state ──────────────────────────────────
+let currentLookKey = null;
+let materialSwapped = false;
+let LOOK_KEYS = []; // populated after buildLooks
+let currentLookIdx = 0;
+const bgFrom = new THREE.Color(0xffffff);
+const bgTo = new THREE.Color(0xffffff);
+let bgMode = 'color'; // 'color' or 'texture'
+let bgTargetTex = null;
+let lightFrom = { ...LIGHT_PRESETS.default };
+let lightTarget = { ...LIGHT_PRESETS.default };
+let uiIsDark = false;
+let mesh1Visible = true, mesh2Visible = true;
+let depthShading = false;
+
+// Cache polygon-offset clones for mesh2 to reduce z-fighting at intersections
+const m2OffsetCache = new Map();
+function getOffsetMat(mat) {
+    if (m2OffsetCache.has(mat)) return m2OffsetCache.get(mat);
+    const clone = mat.clone();
+    clone.polygonOffset = true;
+    clone.polygonOffsetFactor = 1;
+    clone.polygonOffsetUnits = 1;
+    m2OffsetCache.set(mat, clone);
+    return clone;
+}
+
+function applyLookMaterials(lookKey) {
+    if (lookKey === currentLookKey) return;
+    const look = LOOKS[lookKey];
+    if (!look) return;
+    currentLookKey = lookKey;
+    mesh1.material = look.mat1;
+    mesh2.material = getOffsetMat(look.mat2);
+    // Respect visibility toggles
+    mesh1.visible = mesh1Visible;
+    mesh2.visible = mesh2Visible;
+}
+
+// ─── UI ─────────────────────────────────────────────────────
+const labelEl = document.getElementById('label');
+const dotsEl = document.getElementById('dots');
+dotsEl.innerHTML = anims.map(() => '<span></span>').join('');
+const dotSpans = dotsEl.querySelectorAll('span');
+
+function updateUIColors(isDark) {
+    if (isDark === uiIsDark) return;
+    uiIsDark = isDark;
+    labelEl.style.color = isDark ? 'rgba(255,255,255,0.45)' : '#bbb';
+    dotSpans.forEach((d, i) => {
+        if (i === currentIdx) {
+            d.style.background = isDark ? 'rgba(255,255,255,0.7)' : '#888';
+        } else {
+            d.style.background = isDark ? 'rgba(255,255,255,0.2)' : '#ddd';
+        }
+    });
+}
+
+function updateUI() {
+    const lookName = LOOK_KEYS[currentLookIdx] || '';
+    labelEl.textContent = `${currentIdx + 1} / ${anims.length}  —  ${NAMES[currentIdx]}  ·  ${lookName}`;
+    dotSpans.forEach((d, i) => {
+        d.classList.toggle('active', i === currentIdx);
+        if (uiIsDark) {
+            d.style.background = i === currentIdx ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)';
+        } else {
+            d.style.background = i === currentIdx ? '#888' : '#ddd';
+        }
+    });
+}
+
+function applyLookTransition(lookKey) {
+    const look = LOOKS[lookKey];
+    if (!look) return;
+
+    // Capture current bg color
+    if (scene.background instanceof THREE.Color) {
+        bgFrom.copy(scene.background);
+    } else {
+        bgFrom.set(0x000000);
+    }
+
+    if (typeof look.bg === 'number') {
+        bgMode = 'color';
+        bgTo.set(look.bg);
+        bgTargetTex = null;
+    } else {
+        bgMode = 'texture';
+        bgTargetTex = look.bg; // THREE.Texture
+    }
+
+    lightFrom = {
+        ambient: ambientLight.intensity,
+        key: keyLight.intensity,
+        fill: fillLight.intensity,
+        rim: rimLight.intensity
+    };
+    lightTarget = LIGHT_PRESETS[look.lighting];
+
+    let isDark;
+    if (typeof look.bg === 'number') {
+        isDark = new THREE.Color(look.bg).getHSL({}).l < 0.5;
+    } else {
+        isDark = look.uiDark !== undefined ? look.uiDark : true;
+    }
+    updateUIColors(isDark);
+    updateTypoColors();
+}
+
+function switchLook(idx) {
+    currentLookIdx = idx;
+    const lookKey = LOOK_KEYS[currentLookIdx];
+    materialSwapped = false;
+    prevIdx = currentIdx; // trigger transition blend
+    switchTime = performance.now();
+    applyLookTransition(lookKey);
+    updateUI();
+}
+
+function switchTo(idx) {
+    if (idx === currentIdx) return;
+    prevIdx = currentIdx;
+    switchTime = performance.now();
+    currentIdx = idx;
+    materialSwapped = false;
+
+    // Reset to default look for this animation
+    const defaultLook = ANIM_LOOKS[idx];
+    currentLookIdx = LOOK_KEYS.indexOf(defaultLook);
+    if (currentLookIdx < 0) currentLookIdx = 0;
+
+    applyLookTransition(defaultLook);
+    updateUI();
+}
+
+// ─── Typography overlay ──────────────────────────────────────
+const typoCvs = document.getElementById('typo');
+const typoC = typoCvs.getContext('2d');
+
+function resizeTypoCvs() {
+    typoCvs.width = innerWidth * devicePixelRatio;
+    typoCvs.height = innerHeight * devicePixelRatio;
+    typoCvs.style.width = innerWidth + 'px';
+    typoCvs.style.height = innerHeight + 'px';
+    typoC.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+resizeTypoCvs();
+
+// Brand script — wave emphasis with big dramatic words
+const TSEQ = [
+    { fn: 'bleed', d: 1800, text: 'As', color: 'accent' },
+    { fn: null,    d: 200 },
+    { fn: 'bleed', d: 1800, text: 'AI', color: 'volt' },
+    { fn: null,    d: 200 },
+    { fn: 'words', d: 2800, text: 'creates jaw-dropping' },
+    { fn: null,    d: 150 },
+    { fn: 'bleed', d: 2000, text: 'opportunities', color: 'accent' },
+    { fn: null,    d: 300 },
+    { fn: 'words', d: 3200, text: 'it requires an obsession' },
+    { fn: null,    d: 150 },
+    { fn: 'words', d: 2800, text: 'with getting it right.' },
+    { fn: null,    d: 500 },
+    { fn: 'bleed', d: 2000, text: "We've", color: 'accent' },
+    { fn: null,    d: 200 },
+    { fn: 'bleed', d: 2000, text: 'transformed', color: 'accent' },
+    { fn: null,    d: 150 },
+    { fn: 'words', d: 2200, text: 'our talent' },
+    { fn: null,    d: 200 },
+    { fn: 'bleed', d: 1800, text: 'built', color: 'accent' },
+    { fn: null,    d: 150 },
+    { fn: 'words', d: 2500, text: 'our AI platform' },
+    { fn: null,    d: 200 },
+    { fn: 'words', d: 3000, text: 'and evolved our AI' },
+    { fn: null,    d: 150 },
+    { fn: 'words', d: 2800, text: 'go-to-market strategy.' },
+    { fn: null,    d: 400 },
+    { fn: 'words', d: 3000, text: 'We know what it takes' },
+    { fn: null,    d: 300 },
+    { fn: 'words', d: 2500, text: 'To pull you' },
+    { fn: null,    d: 150 },
+    { fn: 'words', d: 2800, text: 'into the future.' },
+    { fn: null,    d: 300 },
+    { fn: 'bleed', d: 2200, text: 'Now.', color: 'volt' },
+    { fn: null,    d: 1500 },
+];
+
+let tsi = 0, tsStart = 0;
+let text3D = null;
+
+// Smart type color — updated on each look switch
+let typoAccent = '140,240,0'; // volt by default
+let typoBase = '0,0,0';
+
+function updateTypoColors() {
+    const M = MATERIALS_CACHE;
+    const lk = currentLookKey && LOOKS[currentLookKey];
+    typoBase = uiIsDark ? '255,255,255' : '0,0,0';
+    if (!lk) { typoAccent = '140,240,0'; return; }
+    const hasVoltShape = lk.mat1 === M.solidVolt || lk.mat2 === M.solidVolt;
+    const hasLightShape = lk.mat1 === M.solidWhite || lk.mat2 === M.solidWhite ||
+                          lk.mat1 === M.solidTan || lk.mat2 === M.solidTan;
+    if (uiIsDark) {
+        // Dark bg: volt accent pops well unless shapes are already volt
+        typoAccent = hasVoltShape ? '255,255,255' : '140,240,0';
+    } else {
+        // Light bg: volt if shapes are also light (need contrast), else dark
+        typoAccent = hasLightShape ? '140,240,0' : '0,0,0';
+    }
+}
+
+function typoCol(sc) {
+    if (sc === 'volt') return '140,240,0';
+    if (sc === 'accent') return typoAccent;
+    return typoBase;
+}
+
+function enter3DText(text, color) {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 256;
+    const cx = c.getContext('2d');
+    cx.fillStyle = color === 'volt' ? '#8CF000' : uiIsDark ? '#fff' : '#000';
+    cx.font = '700 180px Satoshi, sans-serif';
+    cx.textAlign = 'center';
+    cx.textBaseline = 'middle';
+    cx.fillText(text, 512, 128);
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, side: THREE.DoubleSide,
+        depthWrite: false, opacity: 0
+    });
+    text3D = new THREE.Mesh(new THREE.PlaneGeometry(10, 2.5), mat);
+    text3D.position.set(0, 0, -2);
+    scene.add(text3D);
+}
+
+function exit3DText() {
+    if (!text3D) return;
+    scene.remove(text3D);
+    text3D.geometry.dispose();
+    text3D.material.map.dispose();
+    text3D.material.dispose();
+    text3D = null;
+}
+
+function updateTypo(now) {
+    const s = TSEQ[tsi % TSEQ.length];
+    const el = now - tsStart;
+
+    if (el >= s.d) {
+        if (s.fn === '3d') exit3DText();
+        tsi = (tsi + 1) % TSEQ.length;
+        tsStart = now;
+        const ns = TSEQ[tsi];
+        if (ns.fn === '3d') enter3DText(ns.text, ns.color);
+        // Sync cinematic shots — trigger when text leaves screen (entering null gap)
+        if (cinematicMode && !ns.fn && s.fn) startCineShot();
+        return;
+    }
+
+    const t = el / s.d;
+    const w = innerWidth, h = innerHeight;
+
+    typoC.clearRect(0, 0, w, h);
+
+    if (!s.fn) return;
+
+    const col = typoCol(s.color);
+
+    // ── Words: stable layout, wave via weight + opacity only ────
+    if (s.fn === 'words') {
+        const words = s.text.split(' ');
+        const n = words.length;
+
+        const focus = t * (n - 1);
+        const sigma = 1.1;
+
+        const baseFs = Math.round(Math.min(w * 0.048, 48));
+
+        let alpha = t < 0.08 ? t / 0.08 : t > 0.88 ? (1 - t) / 0.12 : 1;
+        alpha *= 0.9;
+
+        typoC.textBaseline = 'middle';
+        typoC.textAlign = 'left';
+
+        const influences = words.map((_, i) => Math.exp(-((i - focus) * (i - focus)) / (2 * sigma * sigma)));
+
+        // Measure at bold size for stable layout
+        typoC.font = `700 ${baseFs}px Satoshi, sans-serif`;
+        const spaceW = typoC.measureText(' ').width;
+        const boldWidths = words.map(word => typoC.measureText(word).width);
+        const totalW = boldWidths.reduce((a, b) => a + b, 0) + spaceW * (n - 1);
+
+        let x = Math.round((w - totalW) / 2);
+        const y = Math.round(h / 2);
+
+        words.forEach((word, i) => {
+            const inf = influences[i];
+            const weight = inf > 0.4 ? 700 : 500;
+            typoC.font = `${weight} ${baseFs}px Satoshi, sans-serif`;
+            typoC.fillStyle = `rgba(${col},${alpha * (0.3 + 0.7 * inf)})`;
+            typoC.fillText(word, x, y);
+            x += boldWidths[i] + spaceW;
+        });
+    }
+
+    // ── Bleed: massive word with type-on reveal ───────────────
+    else if (s.fn === 'bleed') {
+        const text = s.text;
+        const fs = Math.min(w * 0.28, 300);
+        typoC.font = `700 ${fs}px Satoshi, sans-serif`;
+        typoC.textAlign = 'center';
+        typoC.textBaseline = 'middle';
+
+        // Fade out at end
+        let alpha = t > 0.65 ? (1 - t) / 0.35 : 1;
+        alpha *= 0.9;
+
+        // Type-on: reveal characters left to right
+        const revealT = Math.min(t / 0.3, 1); // fully revealed by 30%
+        const charCount = text.length;
+        const revealed = Math.ceil(revealT * charCount);
+
+        if (revealed < charCount) {
+            // Draw revealed portion
+            const partial = text.slice(0, revealed);
+            const fullW = typoC.measureText(text).width;
+            const partW = typoC.measureText(partial).width;
+            typoC.textAlign = 'left';
+            const startX = (w - fullW) / 2;
+            typoC.fillStyle = `rgba(${col},${alpha})`;
+            typoC.fillText(partial, startX, h / 2);
+            // Cursor character fading in
+            if (revealed < charCount) {
+                const nextChar = text[revealed];
+                const cursorAlpha = (revealT * charCount) % 1;
+                typoC.fillStyle = `rgba(${col},${alpha * cursorAlpha})`;
+                typoC.fillText(nextChar, startX + partW, h / 2);
+            }
+        } else {
+            typoC.fillStyle = `rgba(${col},${alpha})`;
+            typoC.fillText(text, w / 2, h / 2);
+        }
+    }
+
+    // (mid style removed — all sentences use wave-based 'words' now)
+
+    // ── 3D text plane rotating in scene ──────────────────────
+    else if (s.fn === '3d' && text3D) {
+        text3D.rotation.y = (t - 0.5) * 0.6;
+        text3D.rotation.x = Math.sin(t * Math.PI) * 0.08;
+        let alpha;
+        if (t < 0.1) alpha = t / 0.1;
+        else if (t < 0.65) alpha = 1;
+        else alpha = 1 - (t - 0.65) / 0.35;
+        text3D.material.opacity = alpha * 0.85;
+    }
+
+}
+
+// ─── Cinematic autopilot mode ────────────────────────────
+let cinematicMode = false;
+let cineShot = null;
+let cineShotStart = 0;
+const defaultCamPos = new THREE.Vector3(2, 4, 14);
+
+function getCineProgress() {
+    let elapsed = 0;
+    const idx = tsi % TSEQ.length;
+    for (let i = 0; i < idx; i++) elapsed += TSEQ[i].d;
+    elapsed += performance.now() - tsStart;
+    const total = TSEQ.reduce((s, e) => s + e.d, 0);
+    return (elapsed % total) / total;
+}
+
+function spherePoint(theta, phi, r) {
+    return new THREE.Vector3(
+        r * Math.sin(phi) * Math.cos(theta),
+        r * Math.cos(phi),
+        r * Math.sin(phi) * Math.sin(theta)
+    );
+}
+
+function makeCineShot() {
+    const p = getCineProgress();
+    const w = p > 0.75 ? (p - 0.75) / 0.25 : 0; // widen factor 0→1
+
+    // Start from current camera position for continuity
+    let startPos = camera.position.clone();
+
+    // Shot type: 20% static (camera holds), 20% wide, 60% normal sweep
+    const shotRoll = Math.random();
+    const isStatic = shotRoll < 0.20;
+    const isWide = shotRoll >= 0.20 && shotRoll < 0.40;
+
+    // Distance ranges — wide shots pull further back
+    const minD = isWide ? lerp(12, 16, w) : lerp(5, 9, w);
+    const maxD = isWide ? lerp(18, 24, w) : lerp(8, 16, w);
+    const d2 = minD + Math.random() * (maxD - minD);
+
+    // Derive current angle from camera position, then sweep from there
+    const curTheta = Math.atan2(camera.position.z, camera.position.x);
+    const curR = camera.position.length();
+
+    let endPos;
+    if (isStatic) {
+        // Static: camera holds position, just watch the animation
+        endPos = startPos.clone();
+    } else {
+        // Gentle swing from current angle: 45°–120°
+        const swing = (Math.PI * 0.25) + Math.random() * (Math.PI * 0.67);
+        const theta2 = curTheta + swing * (Math.random() > 0.5 ? 1 : -1);
+        const phi2 = 0.3 + Math.random() * 2.2;
+        endPos = spherePoint(theta2, phi2, d2);
+    }
+
+    // For wide shots, also push startPos out if it's too close
+    if (isWide && curR < minD) {
+        startPos.normalize().multiplyScalar(minD);
+    }
+
+    // Blend toward default camera as script nears end
+    if (w > 0) {
+        startPos.lerp(defaultCamPos, w * w);
+        endPos.lerp(defaultCamPos, w * w);
+    }
+
+    // Smooth lookAt: blend from current lookAt target toward new offset
+    // Wide shots look more centered, normal/static get slight dramatic offset
+    const laScale = isWide ? 0.3 : 1.0;
+    const lookAtTarget = new THREE.Vector3(
+        (Math.random() - 0.5) * laScale * (1 - w),
+        (Math.random() - 0.5) * laScale * 0.6 * (1 - w),
+        0
+    );
+
+    // Compute time until next text line (current entry + any null gaps after)
+    let lineDur = 0;
+    let li = tsi % TSEQ.length;
+    do {
+        lineDur += TSEQ[li].d;
+        li = (li + 1) % TSEQ.length;
+    } while (li !== tsi % TSEQ.length && !TSEQ[li].fn);
+
+    // Snap zoom: 10% chance — fast cut then hold. Otherwise camera sweeps full line duration
+    // Static shots don't snap (already holding)
+    const snap = !isStatic && Math.random() < 0.10;
+    const moveDur = snap ? (80 + Math.random() * 120) : Math.max(lineDur, 1500);
+
+    // Random visibility: both (60%), mesh1 only (20%), mesh2 only (20%)
+    const visRoll = Math.random();
+    const showM1 = visRoll < 0.8;  // 80%
+    const showM2 = visRoll >= 0.2; // 80% — overlap = both (60%)
+
+    // Sometimes keep same animation or same look for continuity
+    const keepAnim = Math.random() < 0.25;
+    const keepLook = Math.random() < 0.25;
+    const animIdx = keepAnim ? currentIdx : Math.floor(Math.random() * anims.length);
+    const lookKey = keepLook ? LOOK_KEYS[currentLookIdx] : LOOK_KEYS[Math.floor(Math.random() * LOOK_KEYS.length)];
+
+    return {
+        animIdx, lookKey,
+        startPos, endPos,
+        lookAtStart: cineShot ? cineShot.lookAtTarget.clone() : new THREE.Vector3(0, 0, 0),
+        lookAtTarget,
+        moveDur, snap, isStatic,
+        showM1, showM2
+    };
+}
+
+function startCineShot() {
+    cineShot = makeCineShot();
+    cineShotStart = performance.now();
+
+    // Switch animation + look (triggers 500ms blend in render loop)
+    // Only switch if animation actually changed
+    if (cineShot.animIdx !== currentIdx) {
+        prevIdx = currentIdx;
+        switchTime = performance.now();
+        currentIdx = cineShot.animIdx;
+    }
+    const newLookIdx = LOOK_KEYS.indexOf(cineShot.lookKey);
+    if (newLookIdx >= 0 && newLookIdx !== currentLookIdx) {
+        currentLookIdx = newLookIdx;
+        applyLookTransition(cineShot.lookKey);
+        applyLookMaterials(LOOK_KEYS[currentLookIdx]);
+        materialSwapped = true;
+    }
+    updateUI();
+
+    // Apply visibility immediately at shot boundary
+    mesh1.visible = cineShot.showM1;
+    mesh2.visible = cineShot.showM2;
+
+    // Camera starts from current position (no jump) — startPos is already camera.position
+    camera.lookAt(cineShot.lookAtStart);
+}
+
+function updateCinematic(now) {
+    if (!cinematicMode || !cineShot) return;
+
+    const el = now - cineShotStart;
+
+    // Mid-line re-shot: once camera arrives, 30% chance to cut again while text still showing
+    if (!cineShot.midFired && el > cineShot.moveDur + 200) {
+        cineShot.midFired = true;
+        if (Math.random() < 0.30) {
+            startCineShot();
+            return;
+        }
+    }
+
+    // Camera always moving — full shot duration
+    const rawT = Math.min(el / cineShot.moveDur, 1);
+    const t = cineShot.snap ? easeOut(rawT) : ease(rawT);
+
+    camera.position.lerpVectors(cineShot.startPos, cineShot.endPos, t);
+
+    // Smooth lookAt interpolation
+    const la = new THREE.Vector3().lerpVectors(cineShot.lookAtStart, cineShot.lookAtTarget, t);
+    camera.lookAt(la);
+}
+
+function toggleCinematic() {
+    cinematicMode = !cinematicMode;
+    if (cinematicMode) {
+        controls.enabled = false;
+        startCineShot();
+        labelEl.style.opacity = '0';
+        dotsEl.style.opacity = '0';
+    } else {
+        controls.enabled = true;
+        cineShot = null;
+        camera.position.copy(defaultCamPos);
+        camera.lookAt(0, 0, 0);
+        controls.target.set(0, 0, 0);
+        switchTime = performance.now();
+        // Restore both meshes visible
+        mesh1Visible = true; mesh2Visible = true;
+        mesh1.visible = true; mesh2.visible = true;
+        labelEl.style.opacity = '1';
+        dotsEl.style.opacity = '1';
+    }
+}
+
+addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        switchTo((currentIdx + 1) % anims.length);
+    } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        switchTo((currentIdx - 1 + anims.length) % anims.length);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (LOOK_KEYS.length) switchLook((currentLookIdx + 1) % LOOK_KEYS.length);
+    } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (LOOK_KEYS.length) switchLook((currentLookIdx - 1 + LOOK_KEYS.length) % LOOK_KEYS.length);
+    } else if (e.key === '1') {
+        mesh1Visible = !mesh1Visible;
+        mesh1.visible = mesh1Visible;
+    } else if (e.key === '2') {
+        mesh2Visible = !mesh2Visible;
+        mesh2.visible = mesh2Visible;
+    } else if (e.key === '3') {
+        depthShading = !depthShading;
+        const val = depthShading ? 1.0 : 0.0;
+        // Update all shader materials in cache + offset clones
+        const allMats = [...Object.values(MATERIALS_CACHE), ...m2OffsetCache.values()];
+        allMats.forEach(mat => {
+            if (mat.uniforms && mat.uniforms.useShading) {
+                mat.uniforms.useShading.value = val;
+            }
+        });
+        // Flatten scene lights for MeshStandardMaterial
+        if (!depthShading) {
+            ambientLight.intensity = 3.0;
+            keyLight.intensity = 0;
+            fillLight.intensity = 0;
+            rimLight.intensity = 0;
+        } else {
+            // Restore current light preset
+            ambientLight.intensity = lightTarget.ambient;
+            keyLight.intensity = lightTarget.key;
+            fillLight.intensity = lightTarget.fill;
+            rimLight.intensity = lightTarget.rim;
+        }
+    } else if (e.key === ' ') {
+        e.preventDefault();
+        toggleCinematic();
+    }
+});
+
+addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+    resizeTypoCvs();
+});
+
+// ─── Load textures, build looks, start render loop ──────────
+Promise.all([
+    loadTex('holo1', 'assets/backgrounds/01.png'),
+    loadTex('holo2', 'assets/backgrounds/03.png'),
+    loadTex('holo3', 'assets/backgrounds/05.png'),
+    loadTex('holo4', 'assets/backgrounds/07.png'),
+    loadTex('neon1', 'assets/backgrounds/09.png'),
+    loadTex('neon2', 'assets/backgrounds/12.png'),
+    loadTex('neon3', 'assets/backgrounds/14.png'),
+    loadTex('neon4', 'assets/backgrounds/16.png'),
+    loadTex('glass1', 'assets/backgrounds/Frame 2147241085.png'),
+    loadTex('glass2', 'assets/backgrounds/Frame 2147241087.png'),
+    loadTex('glass3', 'assets/backgrounds/Frame 2147241115.png'),
+    loadTex('glass4', 'assets/backgrounds/Frame 2147241117.png'),
+    loadTex('patDots', 'assets/patterns/Frame 2147220431.png', { wrap: true }),
+    loadTex('patStripes', 'assets/patterns/Frame 2147220432.png', { wrap: true }),
+    loadTex('patRain', 'assets/patterns/Frame 2147220433.png', { wrap: true }),
+    loadTex('patDiag', 'assets/patterns/Frame 2147220434.png', { wrap: true }),
+]).then(() => {
+    // Build materials and looks after textures are ready
+    buildLooks();
+    LOOK_KEYS = Object.keys(LOOKS);
+    currentLookIdx = LOOK_KEYS.indexOf(ANIM_LOOKS[0]);
+    if (currentLookIdx < 0) currentLookIdx = 0;
+
+    // Apply initial look
+    const initialLook = LOOKS[ANIM_LOOKS[0]];
+    applyLookMaterials(ANIM_LOOKS[0]);
+    if (typeof initialLook.bg === 'number') {
+        bgMode = 'color';
+        scene.background = new THREE.Color(initialLook.bg);
+        bgTo.set(initialLook.bg);
+        bgFrom.set(initialLook.bg);
+    } else {
+        bgMode = 'texture';
+        scene.background = initialLook.bg;
+        bgTargetTex = initialLook.bg;
+    }
+    lightTarget = LIGHT_PRESETS[initialLook.lighting];
+
+    // Apply default no-shading state
+    if (!depthShading) {
+        const allMats = [...Object.values(MATERIALS_CACHE), ...m2OffsetCache.values()];
+        allMats.forEach(mat => {
+            if (mat.uniforms && mat.uniforms.useShading) {
+                mat.uniforms.useShading.value = 0.0;
+            }
+        });
+        ambientLight.intensity = 3.0;
+        keyLight.intensity = 0;
+        fillLight.intensity = 0;
+        rimLight.intensity = 0;
+    } else {
+        ambientLight.intensity = lightTarget.ambient;
+        keyLight.intensity = lightTarget.key;
+        fillLight.intensity = lightTarget.fill;
+        rimLight.intensity = lightTarget.rim;
+    }
+    let initDark;
+    if (typeof initialLook.bg === 'number') {
+        initDark = new THREE.Color(initialLook.bg).getHSL({}).l < 0.5;
+    } else {
+        initDark = initialLook.uiDark !== undefined ? initialLook.uiDark : true;
+    }
+    updateUIColors(initDark);
+    updateTypoColors();
+    updateUI();
+
+    // Init typography timer
+    tsStart = performance.now();
+
+    // Hide loader
+    document.getElementById('loader').classList.add('done');
+
+    // ─── Render loop ────────────────────────────────────────
+    (function loop(now) {
+        requestAnimationFrame(loop);
+
+        const elapsed = now - switchTime;
+        const t = (elapsed % duration) / duration;
+        const inTransition = prevIdx >= 0 && elapsed < TRANSITION;
+
+        if (inTransition) {
+            const blend = ease(elapsed / TRANSITION);
+
+            // Background transition
+            if (bgMode === 'color' && scene.background instanceof THREE.Color) {
+                scene.background.copy(bgFrom).lerp(bgTo, blend);
+            }
+
+            // Light intensity lerp
+            ambientLight.intensity = lerp(lightFrom.ambient, lightTarget.ambient, blend);
+            keyLight.intensity = lerp(lightFrom.key, lightTarget.key, blend);
+            fillLight.intensity = lerp(lightFrom.fill, lightTarget.fill, blend);
+            rimLight.intensity = lerp(lightFrom.rim, lightTarget.rim, blend);
+
+            // Material + bg swap at transition midpoint
+            if (blend >= 0.5 && !materialSwapped) {
+                applyLookMaterials(LOOK_KEYS[currentLookIdx]);
+                if (bgMode === 'texture') {
+                    scene.background = bgTargetTex;
+                } else if (!(scene.background instanceof THREE.Color)) {
+                    scene.background = new THREE.Color().copy(bgTo);
+                }
+                materialSwapped = true;
+            }
+
+            // Snapshot previous animation
+            const prevT = ((switchTime - 0) % duration) / duration;
+            anims[prevIdx](prevT);
+            const m1p = mesh1.position.clone(), m1r = mesh1.rotation.clone(), m1s = mesh1.scale.clone();
+            const m2p = mesh2.position.clone(), m2r = mesh2.rotation.clone(), m2s = mesh2.scale.clone();
+            const gp = group.position.clone(), gr = group.rotation.clone(), gs = group.scale.clone();
+
+            // Current animation
+            anims[currentIdx](t);
+
+            mesh1.position.lerpVectors(m1p, mesh1.position, blend);
+            mesh1.rotation.x = lerp(m1r.x, mesh1.rotation.x, blend);
+            mesh1.rotation.y = lerp(m1r.y, mesh1.rotation.y, blend);
+            mesh1.rotation.z = lerp(m1r.z, mesh1.rotation.z, blend);
+            mesh1.scale.lerpVectors(m1s, mesh1.scale, blend);
+
+            mesh2.position.lerpVectors(m2p, mesh2.position, blend);
+            mesh2.rotation.x = lerp(m2r.x, mesh2.rotation.x, blend);
+            mesh2.rotation.y = lerp(m2r.y, mesh2.rotation.y, blend);
+            mesh2.rotation.z = lerp(m2r.z, mesh2.rotation.z, blend);
+            mesh2.scale.lerpVectors(m2s, mesh2.scale, blend);
+
+            group.position.lerpVectors(gp, group.position, blend);
+            group.rotation.x = lerp(gr.x, group.rotation.x, blend);
+            group.rotation.y = lerp(gr.y, group.rotation.y, blend);
+            group.rotation.z = lerp(gr.z, group.rotation.z, blend);
+            group.scale.lerpVectors(gs, group.scale, blend);
+        } else {
+            if (prevIdx >= 0) {
+                prevIdx = -1;
+                // Snap to final values
+                if (bgMode === 'color') {
+                    if (!(scene.background instanceof THREE.Color)) {
+                        scene.background = new THREE.Color();
+                    }
+                    scene.background.copy(bgTo);
+                } else {
+                    scene.background = bgTargetTex;
+                }
+                ambientLight.intensity = lightTarget.ambient;
+                keyLight.intensity = lightTarget.key;
+                fillLight.intensity = lightTarget.fill;
+                rimLight.intensity = lightTarget.rim;
+                if (!materialSwapped) {
+                    applyLookMaterials(LOOK_KEYS[currentLookIdx]);
+                    materialSwapped = true;
+                }
+            }
+            anims[currentIdx](t);
+        }
+
+        // Override lights when depth shading is off
+        if (!depthShading) {
+            ambientLight.intensity = 3.0;
+            keyLight.intensity = 0;
+            fillLight.intensity = 0;
+            rimLight.intensity = 0;
+        }
+
+        updateTypo(now);
+        updateCinematic(now);
+        if (!cinematicMode) controls.update();
+        renderer.render(scene, camera);
+    })(performance.now());
+}).catch(err => {
+    console.error('Texture loading failed:', err);
+    document.getElementById('loader').textContent = 'Failed to load assets';
+});
+</script>
+</body>
+</html>
