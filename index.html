@@ -90,6 +90,8 @@ camera.position.set(2, 4, 14);
 const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, alpha: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
+renderer.domElement.style.position = 'relative';
+renderer.domElement.style.zIndex = '1';
 document.body.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -253,7 +255,6 @@ function loadVideos() {
         vid.preload = 'auto';
         vid.style.display = 'none';
         document.body.appendChild(vid);
-        vid.play().catch(() => {}); // autoplay muted for tiled video looks
         videoEls.push(vid);
 
         const tex = new THREE.VideoTexture(vid);
@@ -1284,7 +1285,7 @@ function updateTypo(now) {
     const s = TSEQ[tsi % TSEQ.length];
     const el = now - tsStart;
 
-    if (el >= s.d && !isPlaying) {
+    if (el >= s.d) {
         if (s.fn === '3d') exit3DText();
         tsi = (tsi + 1) % TSEQ.length;
         tsStart = now;
@@ -1848,15 +1849,9 @@ addEventListener('keydown', (e) => {
             scene.background = bgVideoSavedBg;
             bgVideoSavedBg = null;
         }
-    } else if (e.key === 'Shift' && !isRecording && !isPlaying) {
-        isRecording = true;
-        recStart = performance.now();
-        recKeyframes = [];
-        showIndicator('rec');
-        console.log('Recording started');
-    } else if (e.key === 'p' || e.key === 'P') {
-        if (isRecording) return; // don't toggle playback while recording
-        if (isPlaying) { stopPlayback(); } else { startPlayback(); }
+    // Recording disabled
+    // } else if (e.key === 'Shift') {
+    // } else if (e.key === 'p' || e.key === 'P') {
     } else if (e.key === 'd' || e.key === 'D') {
         const SHAPE_SOLIDS = [null, 0x000000, 0xFFFFFF, 0x8CF000];
         if (typeof window.mesh1SolidIdx === 'undefined') window.mesh1SolidIdx = 0;
@@ -1880,46 +1875,11 @@ addEventListener('keydown', (e) => {
         } else {
             mesh2.material = getOffsetMat(createSolidMaterial(c));
         }
-    } else if (e.key === '`' || e.key === '~') {
-        const rec = loadLatestRecording();
-        if (!rec) { console.log('No recording to download'); return; }
-        const blob = new Blob([JSON.stringify(rec)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `shapes3d-recording-${Date.now()}.json`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-        console.log('Recording downloaded');
-    }
-});
-
-addEventListener('keyup', (e) => {
-    if (e.key === 'Shift' && isRecording) {
-        isRecording = false;
-        hideIndicator();
-        const duration = recKeyframes.length ? recKeyframes[recKeyframes.length - 1].t : 0;
-        const rec = { frames: recKeyframes, duration, timestamp: Date.now() };
-        saveRecording(rec);
-        recKeyframes = [];
-        console.log(`Recording stopped: ${rec.frames.length} frames, ${(duration / 1000).toFixed(1)}s`);
-    }
-});
-
-addEventListener('blur', () => {
-    if (isRecording) {
-        isRecording = false;
-        hideIndicator();
-        const duration = recKeyframes.length ? recKeyframes[recKeyframes.length - 1].t : 0;
-        const rec = { frames: recKeyframes, duration, timestamp: Date.now() };
-        saveRecording(rec);
-        recKeyframes = [];
-        console.log('Recording saved (window lost focus)');
     }
 });
 
 addEventListener('click', () => {
-    if (isPlaying) stopPlayback();
-    else if (cinematicMode) toggleCinematic();
+    if (cinematicMode) toggleCinematic();
 });
 
 addEventListener('resize', () => {
@@ -2019,26 +1979,6 @@ Promise.all([
     (function loop(now) {
         requestAnimationFrame(loop);
 
-        // ── Playback mode — bypass all normal logic ──
-        if (isPlaying && playRecording) {
-            const playElapsed = now - playStart;
-            const frames = playRecording.frames;
-            // Advance frame index to match elapsed time
-            while (playFrameIdx < frames.length - 1 && frames[playFrameIdx + 1].t <= playElapsed) {
-                playFrameIdx++;
-            }
-            if (playFrameIdx >= frames.length || playElapsed > playRecording.duration) {
-                stopPlayback();
-            } else {
-                applyKeyframe(frames[playFrameIdx]);
-                updateTypo(now);
-                renderer.render(scene, camera);
-                // Pulse indicator
-                recIndicatorEl.style.opacity = 0.6 + 0.4 * Math.sin(now * 0.004);
-                return;
-            }
-        }
-
         const elapsed = now - switchTime;
         const t = (elapsed % duration) / duration;
         const inTransition = prevIdx >= 0 && elapsed < TRANSITION;
@@ -2131,11 +2071,6 @@ Promise.all([
         updateCinematic(now);
         if (!cinematicMode) controls.update();
 
-        // ── Capture keyframe if recording ──
-        if (isRecording) {
-            captureKeyframe(now);
-            recIndicatorEl.style.opacity = 0.6 + 0.4 * Math.sin(now * 0.006);
-        }
 
         // Keep scene transparent when bg video is playing
         if (bgVideoMode) scene.background = null;
