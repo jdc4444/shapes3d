@@ -1317,7 +1317,7 @@ function updateTypo(now) {
         const focus = t * (n - 1);
         const sigma = 1.1;
 
-        const baseFs = Math.round(w < 600 ? Math.max(w * 0.09, 28) : Math.min(w * 0.065, 72));
+        const baseFs = Math.round(w < 600 ? Math.max(w * 0.11, 32) : Math.min(w * 0.085, 100));
 
         let alpha = t < 0.08 ? t / 0.08 : t > 0.88 ? (1 - t) / 0.12 : 1;
         alpha *= 0.9;
