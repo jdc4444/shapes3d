@@ -1832,6 +1832,29 @@ addEventListener('keydown', (e) => {
         if (isRecording) return; // don't toggle playback while recording
         if (isPlaying) { stopPlayback(); } else { startPlayback(); }
     } else if (e.key === 'd' || e.key === 'D') {
+        const SHAPE_SOLIDS = [null, 0x000000, 0xFFFFFF, 0x8CF000];
+        if (typeof window.mesh1SolidIdx === 'undefined') window.mesh1SolidIdx = 0;
+        window.mesh1SolidIdx = (window.mesh1SolidIdx + 1) % SHAPE_SOLIDS.length;
+        const c = SHAPE_SOLIDS[window.mesh1SolidIdx];
+        if (c === null) {
+            // Restore look material
+            const look = LOOKS[currentLookKey];
+            if (look) mesh1.material = look.mat1;
+        } else {
+            mesh1.material = createSolidMaterial(c);
+        }
+    } else if (e.key === 'c' || e.key === 'C') {
+        const SHAPE_SOLIDS = [null, 0x000000, 0xFFFFFF, 0x8CF000];
+        if (typeof window.mesh2SolidIdx === 'undefined') window.mesh2SolidIdx = 0;
+        window.mesh2SolidIdx = (window.mesh2SolidIdx + 1) % SHAPE_SOLIDS.length;
+        const c = SHAPE_SOLIDS[window.mesh2SolidIdx];
+        if (c === null) {
+            const look = LOOKS[currentLookKey];
+            if (look) mesh2.material = getOffsetMat(look.mat2);
+        } else {
+            mesh2.material = getOffsetMat(createSolidMaterial(c));
+        }
+    } else if (e.key === '`' || e.key === '~') {
         const rec = loadLatestRecording();
         if (!rec) { console.log('No recording to download'); return; }
         const blob = new Blob([JSON.stringify(rec)], { type: 'application/json' });
