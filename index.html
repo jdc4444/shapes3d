@@ -255,6 +255,7 @@ function loadVideos() {
         vid.preload = 'auto';
         vid.style.display = 'none';
         document.body.appendChild(vid);
+        vid.play().catch(() => {});
         videoEls.push(vid);
 
         const tex = new THREE.VideoTexture(vid);
