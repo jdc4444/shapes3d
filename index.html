@@ -1786,6 +1786,14 @@ addEventListener('keydown', (e) => {
     } else if (e.key === 'Enter') {
         typoVisible = !typoVisible;
         typoCvs.style.display = typoVisible ? '' : 'none';
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        const allHidden = labelEl.style.display === 'none';
+        const vis = allHidden ? '' : 'none';
+        labelEl.style.display = vis;
+        dotsEl.style.display = vis;
+        typoCvs.style.display = vis;
+        typoVisible = allHidden;
     } else if (e.key === ' ') {
         e.preventDefault();
         toggleCinematic();
