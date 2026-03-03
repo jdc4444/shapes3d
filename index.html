@@ -1795,7 +1795,7 @@ addEventListener('keydown', (e) => {
     } else if (e.key === 'Enter') {
         typoVisible = !typoVisible;
         typoCvs.style.display = typoVisible ? '' : 'none';
-    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    } else if (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'h' || e.key === 'H') {
         e.preventDefault();
         const allHidden = labelEl.style.display === 'none';
         const vis = allHidden ? '' : 'none';
