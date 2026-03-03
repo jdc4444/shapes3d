@@ -1659,7 +1659,6 @@ function saveRecording(rec) {
     try {
         let all = JSON.parse(localStorage.getItem(RECORDINGS_KEY) || '[]');
         all.push(rec);
-        if (all.length > 5) all = all.slice(-5);
         localStorage.setItem(RECORDINGS_KEY, JSON.stringify(all));
         console.log(`Recording saved: ${rec.frames.length} frames, ${(rec.duration / 1000).toFixed(1)}s`);
     } catch (e) {
