@@ -50,6 +50,7 @@
 <div id="label"></div>
 <div id="dots"></div>
 <canvas id="typo" style="position:fixed;inset:0;pointer-events:none;z-index:10;"></canvas>
+<div id="recIndicator" style="position:fixed;top:20px;right:20px;z-index:50;font-family:'Satoshi',sans-serif;font-size:13px;font-weight:700;letter-spacing:0.1em;padding:6px 14px;border-radius:6px;pointer-events:none;display:none;"></div>
 <script type="importmap">
 {
     "imports": {
@@ -1007,6 +1008,13 @@ let uiIsDark = false;
 let mesh1Visible = true, mesh2Visible = true;
 let depthShading = false;
 
+// ─── Recording & Playback state ─────────────────────────────
+let isRecording = false, isPlaying = false;
+let recStart = 0, recKeyframes = [];
+let playStart = 0, playFrameIdx = 0, playRecording = null;
+const RECORDINGS_KEY = 'shapes3d_recordings';
+const recIndicatorEl = document.getElementById('recIndicator');
+
 // Cache polygon-offset clones for mesh2 to reduce z-fighting at intersections
 const m2OffsetCache = new Map();
 function getOffsetMat(mat) {
@@ -1250,7 +1258,7 @@ function updateTypo(now) {
     const s = TSEQ[tsi % TSEQ.length];
     const el = now - tsStart;
 
-    if (el >= s.d) {
+    if (el >= s.d && !isPlaying) {
         if (s.fn === '3d') exit3DText();
         tsi = (tsi + 1) % TSEQ.length;
         tsStart = now;
@@ -1568,6 +1576,131 @@ function toggleCinematic() {
     }
 }
 
+// ─── Recording & Playback helpers ────────────────────────────
+function captureKeyframe(now) {
+    const kf = {
+        t: now - recStart,
+        cam: [camera.position.x, camera.position.y, camera.position.z],
+        lat: [controls.target.x, controls.target.y, controls.target.z],
+        m1: { p: [mesh1.position.x, mesh1.position.y, mesh1.position.z],
+               r: [mesh1.rotation.x, mesh1.rotation.y, mesh1.rotation.z],
+               s: [mesh1.scale.x, mesh1.scale.y, mesh1.scale.z] },
+        m2: { p: [mesh2.position.x, mesh2.position.y, mesh2.position.z],
+               r: [mesh2.rotation.x, mesh2.rotation.y, mesh2.rotation.z],
+               s: [mesh2.scale.x, mesh2.scale.y, mesh2.scale.z] },
+        g:  { p: [group.position.x, group.position.y, group.position.z],
+               r: [group.rotation.x, group.rotation.y, group.rotation.z],
+               s: [group.scale.x, group.scale.y, group.scale.z] },
+        m1v: mesh1.visible, m2v: mesh2.visible,
+        ai: currentIdx, li: currentLookIdx, lk: currentLookKey,
+        bg: scene.background instanceof THREE.Color
+            ? [scene.background.r, scene.background.g, scene.background.b] : null,
+        tsi: tsi, tsOff: now - tsStart,
+        vm: videoMode, om: objectsMode, ds: depthShading, cm: cinematicMode
+    };
+    recKeyframes.push(kf);
+}
+
+function applyKeyframe(kf) {
+    camera.position.set(kf.cam[0], kf.cam[1], kf.cam[2]);
+    controls.target.set(kf.lat[0], kf.lat[1], kf.lat[2]);
+    camera.lookAt(controls.target);
+
+    mesh1.position.set(kf.m1.p[0], kf.m1.p[1], kf.m1.p[2]);
+    mesh1.rotation.set(kf.m1.r[0], kf.m1.r[1], kf.m1.r[2]);
+    mesh1.scale.set(kf.m1.s[0], kf.m1.s[1], kf.m1.s[2]);
+
+    mesh2.position.set(kf.m2.p[0], kf.m2.p[1], kf.m2.p[2]);
+    mesh2.rotation.set(kf.m2.r[0], kf.m2.r[1], kf.m2.r[2]);
+    mesh2.scale.set(kf.m2.s[0], kf.m2.s[1], kf.m2.s[2]);
+
+    group.position.set(kf.g.p[0], kf.g.p[1], kf.g.p[2]);
+    group.rotation.set(kf.g.r[0], kf.g.r[1], kf.g.r[2]);
+    group.scale.set(kf.g.s[0], kf.g.s[1], kf.g.s[2]);
+
+    mesh1.visible = kf.m1v;
+    mesh2.visible = kf.m2v;
+
+    // Restore look materials
+    if (kf.lk && kf.lk !== currentLookKey) {
+        currentLookIdx = kf.li;
+        applyLookMaterials(kf.lk);
+    }
+
+    // Restore background
+    if (kf.bg) {
+        if (!(scene.background instanceof THREE.Color)) scene.background = new THREE.Color();
+        scene.background.setRGB(kf.bg[0], kf.bg[1], kf.bg[2]);
+    }
+
+    // Restore typography timing
+    tsi = kf.tsi;
+    tsStart = performance.now() - kf.tsOff;
+}
+
+function showIndicator(mode) {
+    recIndicatorEl.style.display = 'block';
+    if (mode === 'rec') {
+        recIndicatorEl.textContent = '● REC';
+        recIndicatorEl.style.background = 'rgba(220,30,30,0.85)';
+        recIndicatorEl.style.color = '#fff';
+    } else {
+        recIndicatorEl.textContent = '▶ PLAY';
+        recIndicatorEl.style.background = 'rgba(30,180,60,0.85)';
+        recIndicatorEl.style.color = '#fff';
+    }
+}
+
+function hideIndicator() {
+    recIndicatorEl.style.display = 'none';
+}
+
+function saveRecording(rec) {
+    try {
+        let all = JSON.parse(localStorage.getItem(RECORDINGS_KEY) || '[]');
+        all.push(rec);
+        if (all.length > 5) all = all.slice(-5);
+        localStorage.setItem(RECORDINGS_KEY, JSON.stringify(all));
+        console.log(`Recording saved: ${rec.frames.length} frames, ${(rec.duration / 1000).toFixed(1)}s`);
+    } catch (e) {
+        console.warn('Failed to save recording:', e);
+    }
+}
+
+function loadAllRecordings() {
+    try { return JSON.parse(localStorage.getItem(RECORDINGS_KEY) || '[]'); }
+    catch { return []; }
+}
+
+function loadLatestRecording() {
+    const all = loadAllRecordings();
+    return all.length ? all[all.length - 1] : null;
+}
+
+function startPlayback() {
+    const rec = loadLatestRecording();
+    if (!rec || !rec.frames || !rec.frames.length) {
+        console.log('No recording to play');
+        return;
+    }
+    playRecording = rec;
+    playFrameIdx = 0;
+    playStart = performance.now();
+    isPlaying = true;
+    controls.enabled = false;
+    showIndicator('play');
+    console.log(`Playing: ${rec.frames.length} frames, ${(rec.duration / 1000).toFixed(1)}s`);
+}
+
+function stopPlayback() {
+    isPlaying = false;
+    playRecording = null;
+    playFrameIdx = 0;
+    hideIndicator();
+    controls.enabled = !cinematicMode;
+    console.log('Playback stopped');
+}
+
 addEventListener('keydown', (e) => {
     if (e.key === 'ArrowRight') {
         e.preventDefault();
@@ -1626,11 +1759,55 @@ addEventListener('keydown', (e) => {
     } else if (e.key === ' ') {
         e.preventDefault();
         toggleCinematic();
+    } else if (e.key === 'Shift' && !isRecording && !isPlaying) {
+        isRecording = true;
+        recStart = performance.now();
+        recKeyframes = [];
+        showIndicator('rec');
+        console.log('Recording started');
+    } else if (e.key === 'p' || e.key === 'P') {
+        if (isRecording) return; // don't toggle playback while recording
+        if (isPlaying) { stopPlayback(); } else { startPlayback(); }
+    } else if (e.key === 'd' || e.key === 'D') {
+        const rec = loadLatestRecording();
+        if (!rec) { console.log('No recording to download'); return; }
+        const blob = new Blob([JSON.stringify(rec)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `shapes3d-recording-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        console.log('Recording downloaded');
+    }
+});
+
+addEventListener('keyup', (e) => {
+    if (e.key === 'Shift' && isRecording) {
+        isRecording = false;
+        hideIndicator();
+        const duration = recKeyframes.length ? recKeyframes[recKeyframes.length - 1].t : 0;
+        const rec = { frames: recKeyframes, duration, timestamp: Date.now() };
+        saveRecording(rec);
+        recKeyframes = [];
+        console.log(`Recording stopped: ${rec.frames.length} frames, ${(duration / 1000).toFixed(1)}s`);
+    }
+});
+
+addEventListener('blur', () => {
+    if (isRecording) {
+        isRecording = false;
+        hideIndicator();
+        const duration = recKeyframes.length ? recKeyframes[recKeyframes.length - 1].t : 0;
+        const rec = { frames: recKeyframes, duration, timestamp: Date.now() };
+        saveRecording(rec);
+        recKeyframes = [];
+        console.log('Recording saved (window lost focus)');
     }
 });
 
 addEventListener('click', () => {
-    if (cinematicMode) toggleCinematic();
+    if (isPlaying) stopPlayback();
+    else if (cinematicMode) toggleCinematic();
 });
 
 addEventListener('resize', () => {
@@ -1730,6 +1907,26 @@ Promise.all([
     (function loop(now) {
         requestAnimationFrame(loop);
 
+        // ── Playback mode — bypass all normal logic ──
+        if (isPlaying && playRecording) {
+            const playElapsed = now - playStart;
+            const frames = playRecording.frames;
+            // Advance frame index to match elapsed time
+            while (playFrameIdx < frames.length - 1 && frames[playFrameIdx + 1].t <= playElapsed) {
+                playFrameIdx++;
+            }
+            if (playFrameIdx >= frames.length || playElapsed > playRecording.duration) {
+                stopPlayback();
+            } else {
+                applyKeyframe(frames[playFrameIdx]);
+                updateTypo(now);
+                renderer.render(scene, camera);
+                // Pulse indicator
+                recIndicatorEl.style.opacity = 0.6 + 0.4 * Math.sin(now * 0.004);
+                return;
+            }
+        }
+
         const elapsed = now - switchTime;
         const t = (elapsed % duration) / duration;
         const inTransition = prevIdx >= 0 && elapsed < TRANSITION;
@@ -1821,6 +2018,13 @@ Promise.all([
         updateTypo(now);
         updateCinematic(now);
         if (!cinematicMode) controls.update();
+
+        // ── Capture keyframe if recording ──
+        if (isRecording) {
+            captureKeyframe(now);
+            recIndicatorEl.style.opacity = 0.6 + 0.4 * Math.sin(now * 0.006);
+        }
+
         renderer.render(scene, camera);
     })(performance.now());
 }).catch(err => {
