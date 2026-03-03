@@ -852,19 +852,19 @@ function buildLooks() {
     M.solidWhite = createSolidMaterial(0xFFFFFF);
     M.solidTan4 = createSolidMaterial(0x8E867E);
     M.solidVolt3 = createSolidMaterial(0x328200);
-    // Screen-space masks
-    M.maskHolo1 = createScreenMaskMaterial('holo1');
-    M.maskHolo2 = createScreenMaskMaterial('holo2');
-    M.maskHolo3 = createScreenMaskMaterial('holo3');
-    M.maskHolo4 = createScreenMaskMaterial('holo4');
-    M.maskNeon1 = createScreenMaskMaterial('neon1');
-    M.maskNeon2 = createScreenMaskMaterial('neon2');
-    M.maskNeon3 = createScreenMaskMaterial('neon3');
-    M.maskNeon4 = createScreenMaskMaterial('neon4');
-    M.maskGlass1 = createScreenMaskMaterial('glass1');
-    M.maskGlass2 = createScreenMaskMaterial('glass2');
-    M.maskGlass3 = createScreenMaskMaterial('glass3');
-    M.maskGlass4 = createScreenMaskMaterial('glass4');
+    // Screen-space video masks (replace stills with videos)
+    M.maskHolo1 = createVideoMaskMaterial(videoTextures[0]);
+    M.maskHolo2 = createVideoMaskMaterial(videoTextures[1]);
+    M.maskHolo3 = createVideoMaskMaterial(videoTextures[2]);
+    M.maskHolo4 = createVideoMaskMaterial(videoTextures[3]);
+    M.maskNeon1 = createVideoMaskMaterial(videoTextures[4]);
+    M.maskNeon2 = createVideoMaskMaterial(videoTextures[5]);
+    M.maskNeon3 = createVideoMaskMaterial(videoTextures[6]);
+    M.maskNeon4 = createVideoMaskMaterial(videoTextures[7]);
+    M.maskGlass1 = createVideoMaskMaterial(videoTextures[8]);
+    M.maskGlass2 = createVideoMaskMaterial(videoTextures[9]);
+    M.maskGlass3 = createVideoMaskMaterial(videoTextures[10]);
+    M.maskGlass4 = createVideoMaskMaterial(videoTextures[11]);
     // Screen-space pattern masks
     M.patDotsVolt = createPatternMaskMaterial('patDots', 0x8CF000);
     M.patDiagTan = createPatternMaskMaterial('patDiag', 0xF5F0EB);
@@ -872,8 +872,8 @@ function buildLooks() {
     M.patStripesVolt = createPatternMaskMaterial('patStripes', 0x8CF000);
     M.patDotsWhite = createPatternMaskMaterial('patDots', 0xFFFFFF);
     M.patStripesCarbon = createPatternMaskMaterial('patStripes', 0x333333);
-    M.maskNeon1Alt = createScreenMaskMaterial('neon1');
-    M.maskGlass3Alt = createScreenMaskMaterial('glass3');
+    M.maskNeon1Alt = createVideoMaskMaterial(videoTextures[12]);
+    M.maskGlass3Alt = createVideoMaskMaterial(videoTextures[13]);
     M.patDiagVolt = createPatternMaskMaterial('patDiag', 0x8CF000);
     M.patRainVolt = createPatternMaskMaterial('patRain', 0x8CF000);
     M.patDotsCarbon = createPatternMaskMaterial('patDots', 0x333333);
