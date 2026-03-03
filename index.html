@@ -1802,6 +1802,8 @@ addEventListener('keydown', (e) => {
         labelEl.style.display = vis;
         dotsEl.style.display = vis;
         typoCvs.style.display = vis;
+        labelEl.style.opacity = allHidden ? '1' : '0';
+        dotsEl.style.opacity = allHidden ? '1' : '0';
         typoVisible = allHidden;
     } else if (e.key === 'f' || e.key === 'F') {
         const isBlack = scene.background instanceof THREE.Color &&
