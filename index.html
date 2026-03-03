@@ -210,6 +210,122 @@ function restoreLShapes() {
     mesh2.geometry = lShapeGeo2;
 }
 
+// ─── Video mode: video textures on shapes ────────────────────
+const VIDEO_FILES = [
+    'Smooth_gradient_28568f3f8b.mp4',
+    'Smooth_organic_fluid_gradient_13fa0949f8.mp4',
+    'Smooth_organic_fluid_gradient_5028145661.mp4',
+    'Smooth_organic_fluid_gradient_c1fcec6933.mp4',
+    'httpss.mj.runCnAqmHJ20Pg_--ar_256179_--video_1_690cfe5a-61f8-454a-9a9e-cf6c9b727374_3.mp4',
+    'jdc4444_httpss.mj.runAHQLrLANHdI_smooth_gradient_--ar_256171__de0ff596-2bbe-4888-8383-45a8debaff2a_3.mp4',
+    'jdc4444_httpss.mj.runHkSW_3UTqrM_--ar_256171_--video_1_90662cc6-5184-41ee-8618-c9f4373fe8fa_3.mp4',
+    'jdc4444_httpss.mj.runegdc-zjz9Fk_smooth_dynamic_gradient_--ar_64d66fa1-5aa7-4c3e-83f6-8f74e438f895_0.mp4',
+    'jdc4444_httpss.mj.runfbeBGp61mY4_smooth_animation_--ar_169_--_3e1613d2-7f33-43fb-9a1a-20e5e338c3c7_1.mp4',
+    'jdc4444_httpss.mj.runv81qWNHD0e8_--ar_256121_--video_1_ad48ddfa-fe5e-4b4e-897d-69b273f7903b_1.mp4',
+    'jdc4444_httpss.mj.runy5-XnP-l4IE_mettalic_3d_simulation_--ar__0bafa9d6-f41c-474e-adfd-d400c53993a5_1.mp4',
+    'jdc4444_httpss.mj.runylL6_iSTemU_--ar_181256_--video_1_6a7cbe1b-0f29-4e4c-98a2-d97ea94ef67d_3.mov',
+];
+
+let videoMode = false;
+const videoEls = [];      // <video> elements
+const videoTextures = [];  // THREE.VideoTexture per video
+const videoMaterials = []; // ShaderMaterial per video (screen-space mask)
+
+// Pre-saved materials to restore when leaving video mode
+let preVideoMat1 = null;
+let preVideoMat2 = null;
+
+function loadVideos() {
+    VIDEO_FILES.forEach((file, i) => {
+        const vid = document.createElement('video');
+        vid.src = `assets/videos/${file}`;
+        vid.crossOrigin = 'anonymous';
+        vid.loop = true;
+        vid.muted = true;
+        vid.playsInline = true;
+        vid.preload = 'auto';
+        vid.style.display = 'none';
+        document.body.appendChild(vid);
+        videoEls.push(vid);
+
+        const tex = new THREE.VideoTexture(vid);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        videoTextures.push(tex);
+    });
+    console.log(`Prepared ${videoTextures.length} video textures`);
+}
+
+function createVideoMaskMaterial(videoTex) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: videoTex },
+            useShading: { value: depthShading ? 1.0 : 0.0 }
+        },
+        vertexShader: screenMaskVert,
+        fragmentShader: screenMaskFrag
+    });
+}
+
+function applyRandomVideoMaterials() {
+    if (videoTextures.length === 0) return;
+    // Pick two random videos (can be same)
+    const i1 = Math.floor(Math.random() * videoTextures.length);
+    let i2 = Math.floor(Math.random() * videoTextures.length);
+    // Try for different if enough videos
+    if (videoTextures.length > 1 && i2 === i1) i2 = (i1 + 1) % videoTextures.length;
+
+    // Play selected videos, pause others
+    videoEls.forEach((v, idx) => {
+        if (idx === i1 || idx === i2) {
+            v.play().catch(() => {});
+        } else {
+            v.pause();
+        }
+    });
+
+    const mat1 = createVideoMaskMaterial(videoTextures[i1]);
+    const mat2 = createVideoMaskMaterial(videoTextures[i2]);
+    mesh1.material = mat1;
+    mesh2.material = getOffsetMat(mat2);
+    // Dark bg works best with video textures
+    scene.background = new THREE.Color(0x000000);
+    updateUIColors(true);
+    updateTypoColors();
+}
+
+function disableVideoMode() {
+    // Pause all videos
+    videoEls.forEach(v => v.pause());
+    // Force-restore look system materials + background
+    const lookKey = LOOK_KEYS[currentLookIdx];
+    const look = LOOKS[lookKey];
+    if (look) {
+        currentLookKey = null; // clear so applyLookMaterials doesn't skip
+        mesh1.material = look.mat1;
+        mesh2.material = getOffsetMat(look.mat2);
+        currentLookKey = lookKey;
+        // Restore background
+        if (typeof look.bg === 'number') {
+            scene.background = new THREE.Color(look.bg);
+        }
+        // Restore lighting
+        const preset = LIGHT_PRESETS[look.lighting];
+        ambientLight.intensity = preset.ambient;
+        keyLight.intensity = preset.key;
+        fillLight.intensity = preset.fill;
+        rimLight.intensity = preset.rim;
+        lightTarget = preset;
+        // Restore UI colors
+        const isDark = typeof look.bg === 'number'
+            ? new THREE.Color(look.bg).getHSL({}).l < 0.5
+            : (look.uiDark !== undefined ? look.uiDark : true);
+        updateUIColors(isDark);
+        updateTypoColors();
+    }
+}
+
 // ─── Reset helpers ──────────────────────────────────────────
 function resetMesh(m, rx) {
     m.position.set(rx, 0, 0);
@@ -928,8 +1044,11 @@ function applyLookMaterials(lookKey) {
     const look = LOOKS[lookKey];
     if (!look) return;
     currentLookKey = lookKey;
-    mesh1.material = look.mat1;
-    mesh2.material = getOffsetMat(look.mat2);
+    // In video mode, don't override materials — video textures take priority
+    if (!videoMode) {
+        mesh1.material = look.mat1;
+        mesh2.material = getOffsetMat(look.mat2);
+    }
     // Respect visibility toggles
     mesh1.visible = mesh1Visible;
     mesh2.visible = mesh2Visible;
@@ -970,6 +1089,17 @@ function updateUI() {
 function applyLookTransition(lookKey) {
     const look = LOOKS[lookKey];
     if (!look) return;
+
+    // In video mode, keep dark bg and mask lighting — skip look transitions
+    if (videoMode) {
+        bgMode = 'color';
+        bgFrom.set(0x000000);
+        bgTo.set(0x000000);
+        lightTarget = LIGHT_PRESETS['mask'];
+        updateUIColors(true);
+        updateTypoColors();
+        return;
+    }
 
     // Capture current bg color
     if (scene.background instanceof THREE.Color) {
@@ -1413,6 +1543,11 @@ function startCineShot() {
         restoreLShapes();
     }
 
+    // Video mode: apply random video textures each shot
+    if (videoMode && videoTextures.length > 0) {
+        applyRandomVideoMaterials();
+    }
+
     // Camera starts from current position (no jump) — startPos is already camera.position
     camera.lookAt(cineShot.lookAtStart);
 }
@@ -1509,6 +1644,13 @@ addEventListener('keydown', (e) => {
     } else if (e.key === 'o' || e.key === 'O') {
         objectsMode = !objectsMode;
         if (!objectsMode) restoreLShapes();
+    } else if (e.key === 'v' || e.key === 'V') {
+        videoMode = !videoMode;
+        if (videoMode) {
+            applyRandomVideoMaterials();
+        } else {
+            disableVideoMode();
+        }
     } else if (e.key === 'Enter') {
         typoVisible = !typoVisible;
         typoCvs.style.display = typoVisible ? '' : 'none';
@@ -1553,6 +1695,9 @@ Promise.all([
         results.forEach(r => { if (r) modelGeometries.push(r); });
         console.log(`Loaded ${modelGeometries.length} object models`);
     });
+
+    // Prepare video textures (non-blocking, videos load on demand)
+    loadVideos();
 
     // Build materials and looks after textures are ready
     buildLooks();
