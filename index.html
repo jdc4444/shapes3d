@@ -246,6 +246,7 @@ function loadVideos() {
         vid.preload = 'auto';
         vid.style.display = 'none';
         document.body.appendChild(vid);
+        vid.play().catch(() => {}); // autoplay muted for tiled video looks
         videoEls.push(vid);
 
         const tex = new THREE.VideoTexture(vid);
@@ -270,20 +271,9 @@ function createVideoMaskMaterial(videoTex) {
 
 function applyRandomVideoMaterials() {
     if (videoTextures.length === 0) return;
-    // Pick two random videos (can be same)
     const i1 = Math.floor(Math.random() * videoTextures.length);
     let i2 = Math.floor(Math.random() * videoTextures.length);
-    // Try for different if enough videos
     if (videoTextures.length > 1 && i2 === i1) i2 = (i1 + 1) % videoTextures.length;
-
-    // Play selected videos, pause others
-    videoEls.forEach((v, idx) => {
-        if (idx === i1 || idx === i2) {
-            v.play().catch(() => {});
-        } else {
-            v.pause();
-        }
-    });
 
     const mat1 = createVideoMaskMaterial(videoTextures[i1]);
     const mat2 = createVideoMaskMaterial(videoTextures[i2]);
@@ -292,8 +282,6 @@ function applyRandomVideoMaterials() {
 }
 
 function disableVideoMode() {
-    // Pause all videos
-    videoEls.forEach(v => v.pause());
     // Force-restore look system materials + background
     const lookKey = LOOK_KEYS[currentLookIdx];
     const look = LOOKS[lookKey];
@@ -830,7 +818,89 @@ function createPatternMaskMaterial(patKey, brandColor) {
     });
 }
 
-// UV texture materials removed — screen-space masks avoid stretching on L-shapes
+// ─── UV-tiled shaders (actual mesh UVs, repeating texture) ──
+
+const uvTiledVert = `
+    varying vec2 vUv;
+    varying vec3 vWorldNormal;
+    void main() {
+        vUv = uv;
+        vWorldNormal = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+`;
+
+const uvTiledFrag = `
+    uniform sampler2D map;
+    uniform float tileRepeat;
+    uniform float useShading;
+    varying vec2 vUv;
+    varying vec3 vWorldNormal;
+    void main() {
+        vec2 uv = fract(vUv * tileRepeat);
+        vec3 tex = texture2D(map, uv).rgb;
+        float facing = abs(dot(normalize(vWorldNormal), vec3(0.0, 0.0, 1.0)));
+        float shade = mix(0.45, 1.0, facing);
+        shade = mix(1.0, shade, useShading);
+        gl_FragColor = vec4(tex * shade, 1.0);
+    }
+`;
+
+const uvTiledPatFrag = `
+    uniform sampler2D map;
+    uniform vec3 baseColor;
+    uniform float tileRepeat;
+    uniform float useShading;
+    varying vec2 vUv;
+    varying vec3 vWorldNormal;
+    void main() {
+        vec2 uv = fract(vUv * tileRepeat);
+        float lum = texture2D(map, uv).r;
+        vec3 col = baseColor * (0.55 + 0.45 * lum);
+        float facing = abs(dot(normalize(vWorldNormal), vec3(0.0, 0.0, 1.0)));
+        float shade = mix(0.4, 1.0, facing);
+        shade = mix(1.0, shade, useShading);
+        gl_FragColor = vec4(col * shade, 1.0);
+    }
+`;
+
+function createTiledTextureMaterial(tex, repeat = 3.0) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: tex },
+            tileRepeat: { value: repeat },
+            useShading: { value: 1.0 }
+        },
+        vertexShader: uvTiledVert,
+        fragmentShader: uvTiledFrag
+    });
+}
+
+function createTiledPatternMaterial(texKey, brandColor, repeat = 3.0) {
+    const c = new THREE.Color(brandColor);
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: TEXTURES[texKey] },
+            baseColor: { value: new THREE.Vector3(c.r, c.g, c.b) },
+            tileRepeat: { value: repeat },
+            useShading: { value: 1.0 }
+        },
+        vertexShader: uvTiledVert,
+        fragmentShader: uvTiledPatFrag
+    });
+}
+
+function createTiledVideoMaterial(videoTex, repeat = 2.0) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            map: { value: videoTex },
+            tileRepeat: { value: repeat },
+            useShading: { value: 1.0 }
+        },
+        vertexShader: uvTiledVert,
+        fragmentShader: uvTiledFrag
+    });
+}
 
 // ─── Look system ────────────────────────────────────────────
 let LOOKS = {};
@@ -843,8 +913,8 @@ function buildLooks() {
     M.solidVolt = createSolidMaterial(0x8CF000);
     M.solidTan = createSolidMaterial(0xF5F0EB);
     M.solidWhite = createSolidMaterial(0xFFFFFF);
-    M.solidTan4 = createSolidMaterial(0x8E867E);   // Tan mid
-    M.solidVolt3 = createSolidMaterial(0x328200);   // Volt dark
+    M.solidTan4 = createSolidMaterial(0x8E867E);
+    M.solidVolt3 = createSolidMaterial(0x328200);
     // Screen-space masks
     M.maskHolo1 = createScreenMaskMaterial('holo1');
     M.maskHolo2 = createScreenMaskMaterial('holo2');
@@ -858,18 +928,15 @@ function buildLooks() {
     M.maskGlass2 = createScreenMaskMaterial('glass2');
     M.maskGlass3 = createScreenMaskMaterial('glass3');
     M.maskGlass4 = createScreenMaskMaterial('glass4');
-    // Pattern masks
+    // Screen-space pattern masks
     M.patDotsVolt = createPatternMaskMaterial('patDots', 0x8CF000);
     M.patDiagTan = createPatternMaskMaterial('patDiag', 0xF5F0EB);
     M.patRainWhite = createPatternMaskMaterial('patRain', 0xFFFFFF);
     M.patStripesVolt = createPatternMaskMaterial('patStripes', 0x8CF000);
     M.patDotsWhite = createPatternMaskMaterial('patDots', 0xFFFFFF);
     M.patStripesCarbon = createPatternMaskMaterial('patStripes', 0x333333);
-    // Additional screen-space masks for variety
     M.maskNeon1Alt = createScreenMaskMaterial('neon1');
     M.maskGlass3Alt = createScreenMaskMaterial('glass3');
-
-    // More pattern material combos
     M.patDiagVolt = createPatternMaskMaterial('patDiag', 0x8CF000);
     M.patRainVolt = createPatternMaskMaterial('patRain', 0x8CF000);
     M.patDotsCarbon = createPatternMaskMaterial('patDots', 0x333333);
@@ -877,104 +944,170 @@ function buildLooks() {
     M.patStripesWhite = createPatternMaskMaterial('patStripes', 0xFFFFFF);
     M.patRainCarbon = createPatternMaskMaterial('patRain', 0x333333);
 
+    // UV-tiled pattern materials (actual mesh UVs, repeating)
+    M.tileDotsVolt    = createTiledPatternMaterial('patDots', 0x8CF000, 3.0);
+    M.tileDotsWhite   = createTiledPatternMaterial('patDots', 0xFFFFFF, 3.0);
+    M.tileDotsCarbon  = createTiledPatternMaterial('patDots', 0x333333, 3.0);
+    M.tileStripesVolt = createTiledPatternMaterial('patStripes', 0x8CF000, 2.0);
+    M.tileStripesWhite= createTiledPatternMaterial('patStripes', 0xFFFFFF, 2.0);
+    M.tileDiagTan     = createTiledPatternMaterial('patDiag', 0xF5F0EB, 2.5);
+    M.tileDiagVolt    = createTiledPatternMaterial('patDiag', 0x8CF000, 2.5);
+    M.tileRainWhite   = createTiledPatternMaterial('patRain', 0xFFFFFF, 3.0);
+    M.tileRainVolt    = createTiledPatternMaterial('patRain', 0x8CF000, 3.0);
+
+    // UV-tiled video materials (actual mesh UVs, repeating)
+    if (videoTextures.length >= 6) {
+        M.tileVid0 = createTiledVideoMaterial(videoTextures[0], 2.0);  // smooth gradient
+        M.tileVid1 = createTiledVideoMaterial(videoTextures[1], 2.0);  // organic fluid
+        M.tileVid2 = createTiledVideoMaterial(videoTextures[2], 2.0);  // organic fluid alt
+        M.tileVid3 = createTiledVideoMaterial(videoTextures[3], 1.5);  // organic fluid lg
+        M.tileVid4 = createTiledVideoMaterial(videoTextures[4], 1.5);  // midjourney vivid
+        M.tileVid5 = createTiledVideoMaterial(videoTextures[10], 1.5); // metallic sim
+    }
+
     LOOKS = {
-        // ── A. Both solid (same) ────────────────────────────
-        carbonOnWhite:   { mat1: M.solidCarbon, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'default' },
-        voltOnCarbon:    { mat1: M.solidVolt, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
-        tanOnCarbon:     { mat1: M.solidTan, mat2: M.solidTan, bg: 0x000000, lighting: 'dark' },
-        whiteOnCarbon:   { mat1: M.solidWhite, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
+        // ── 1–4: Solid both ─────────────────────────────────
+        L01_carbonOnWhite:   { mat1: M.solidCarbon, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'default' },
+        L02_voltOnCarbon:    { mat1: M.solidVolt, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
+        L03_tanOnCarbon:     { mat1: M.solidTan, mat2: M.solidTan, bg: 0x000000, lighting: 'dark' },
+        L04_whiteOnCarbon:   { mat1: M.solidWhite, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
 
-        // ── B. Both screen-masked (same texture) ────────────
-        holoMask1:       { mat1: M.maskHolo1, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
-        holoMask2:       { mat1: M.maskHolo2, mat2: M.maskHolo2, bg: 0xF5F0EB, lighting: 'mask' },
-        glassMask1:      { mat1: M.maskGlass1, mat2: M.maskGlass1, bg: 0xFFFFFF, lighting: 'mask' },
-        neonMask1:       { mat1: M.maskNeon1, mat2: M.maskNeon1, bg: 0x000000, lighting: 'mask' },
+        // ── 5–8: Screen-mask both (same) ────────────────────
+        L05_holoMask1:       { mat1: M.maskHolo1, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
+        L06_holoMask2:       { mat1: M.maskHolo2, mat2: M.maskHolo2, bg: 0xF5F0EB, lighting: 'mask' },
+        L07_glassMask1:      { mat1: M.maskGlass1, mat2: M.maskGlass1, bg: 0xFFFFFF, lighting: 'mask' },
+        L08_neonMask1:       { mat1: M.maskNeon1, mat2: M.maskNeon1, bg: 0x000000, lighting: 'mask' },
 
-        // ── C. Both screen-masked (different textures!) ─────
-        holoNeonSplit:   { mat1: M.maskHolo1, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
-        holoGlassSplit:  { mat1: M.maskHolo3, mat2: M.maskGlass3, bg: 0xF5F0EB, lighting: 'mask' },
-        neonNeonSplit:   { mat1: M.maskNeon1, mat2: M.maskNeon4, bg: 0x000000, lighting: 'mask' },
-        glassGlassSplit: { mat1: M.maskGlass1, mat2: M.maskGlass4, bg: 0xFFFFFF, lighting: 'mask' },
-        holoHoloSplit:   { mat1: M.maskHolo2, mat2: M.maskHolo4, bg: 0x000000, lighting: 'mask' },
+        // ── 9–13: Screen-mask both (split) ──────────────────
+        L09_holoNeonSplit:   { mat1: M.maskHolo1, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
+        L10_holoGlassSplit:  { mat1: M.maskHolo3, mat2: M.maskGlass3, bg: 0xF5F0EB, lighting: 'mask' },
+        L11_neonNeonSplit:   { mat1: M.maskNeon1, mat2: M.maskNeon4, bg: 0x000000, lighting: 'mask' },
+        L12_glassGlassSplit: { mat1: M.maskGlass1, mat2: M.maskGlass4, bg: 0xFFFFFF, lighting: 'mask' },
+        L13_holoHoloSplit:   { mat1: M.maskHolo2, mat2: M.maskHolo4, bg: 0x000000, lighting: 'mask' },
 
-        // ── D. One masked, one solid ────────────────────────
-        holoVsSolid:     { mat1: M.maskHolo1, mat2: M.solidCarbon, bg: 0x000000, lighting: 'mask' },
-        neonVsVolt:      { mat1: M.solidVolt, mat2: M.maskNeon3, bg: 0x000000, lighting: 'dark' },
-        glassVsCarbon:   { mat1: M.maskGlass2, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'mask' },
-        solidVsNeon:     { mat1: M.solidWhite, mat2: M.maskNeon1, bg: 0x000000, lighting: 'dark' },
-        tanVsHolo:       { mat1: M.solidTan, mat2: M.maskHolo4, bg: 0x000000, lighting: 'dark' },
+        // ── 14–18: Mask + solid ─────────────────────────────
+        L14_holoVsSolid:     { mat1: M.maskHolo1, mat2: M.solidCarbon, bg: 0x000000, lighting: 'mask' },
+        L15_neonVsVolt:      { mat1: M.solidVolt, mat2: M.maskNeon3, bg: 0x000000, lighting: 'dark' },
+        L16_glassVsCarbon:   { mat1: M.maskGlass2, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'mask' },
+        L17_solidVsNeon:     { mat1: M.solidWhite, mat2: M.maskNeon1, bg: 0x000000, lighting: 'dark' },
+        L18_tanVsHolo:       { mat1: M.solidTan, mat2: M.maskHolo4, bg: 0x000000, lighting: 'dark' },
 
-        // ── E. Dual-mask (two different screen-space textures) ─
-        uvHoloBoth:      { mat1: M.maskHolo3, mat2: M.patDotsVolt, bg: 0x000000, lighting: 'mask' },
-        uvGlassBoth:     { mat1: M.maskGlass2, mat2: M.patDiagTan, bg: 0xFFFFFF, lighting: 'mask' },
+        // ── 19–20: Dual-mask combo ──────────────────────────
+        L19_holoDots:        { mat1: M.maskHolo3, mat2: M.patDotsVolt, bg: 0x000000, lighting: 'mask' },
+        L20_glassDiag:       { mat1: M.maskGlass2, mat2: M.patDiagTan, bg: 0xFFFFFF, lighting: 'mask' },
 
-        // ── F. Screen-masked + solid ────────────────────────
-        uvHoloVsCarbon:  { mat1: M.maskHolo2, mat2: M.solidCarbon, bg: 0x000000, lighting: 'mask' },
-        uvGlassVsVolt:   { mat1: M.maskGlass3Alt, mat2: M.solidVolt, bg: 0xF5F0EB, lighting: 'mask' },
-        uvNeonVsWhite:   { mat1: M.solidWhite, mat2: M.maskNeon1Alt, bg: 0x000000, lighting: 'dark' },
+        // ── 21–23: Mask + solid ─────────────────────────────
+        L21_holoVsCarbon:    { mat1: M.maskHolo2, mat2: M.solidCarbon, bg: 0x000000, lighting: 'mask' },
+        L22_glassVsVolt:     { mat1: M.maskGlass3Alt, mat2: M.solidVolt, bg: 0xF5F0EB, lighting: 'mask' },
+        L23_neonVsWhite:     { mat1: M.solidWhite, mat2: M.maskNeon1Alt, bg: 0x000000, lighting: 'dark' },
 
-        // ── G. Pattern + screen-masked ──────────────────────
-        uvHoloVsMaskNeon:  { mat1: M.patStripesVolt, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
-        maskGlassVsUvHolo: { mat1: M.maskGlass1, mat2: M.maskHolo2, bg: 0xFFFFFF, lighting: 'mask' },
+        // ── 24–25: Pattern mask + screen mask ───────────────
+        L24_stripesVsNeon:   { mat1: M.patStripesVolt, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
+        L25_glassVsHolo:     { mat1: M.maskGlass1, mat2: M.maskHolo2, bg: 0xFFFFFF, lighting: 'mask' },
 
-        // ── H. Pattern + solid ──────────────────────────────
-        dotVoltVsCarbon:   { mat1: M.patDotsVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
-        stripesTanVsWhite: { mat1: M.solidWhite, mat2: M.patDiagTan, bg: 0x000000, lighting: 'dark' },
-        stripesWhiteVsVolt:{ mat1: M.patStripesWhite, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
-        diagVoltVsWhite:   { mat1: M.patDiagVolt, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
-        rainVoltVsCarbon:  { mat1: M.patRainVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+        // ── 26–30: Pattern mask + solid ─────────────────────
+        L26_dotVoltVsCarbon: { mat1: M.patDotsVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+        L27_diagTanVsWhite:  { mat1: M.solidWhite, mat2: M.patDiagTan, bg: 0x000000, lighting: 'dark' },
+        L28_stripesWhiteVolt:{ mat1: M.patStripesWhite, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
+        L29_diagVoltVsWhite: { mat1: M.patDiagVolt, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
+        L30_rainVoltVsCarbon:{ mat1: M.patRainVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
 
-        // ── I. Pattern + masked ─────────────────────────────
-        patVsHolo:       { mat1: M.patDotsWhite, mat2: M.maskHolo3, bg: 0x000000, lighting: 'mask' },
-        patVsNeon:       { mat1: M.patStripesVolt, mat2: M.maskNeon4, bg: 0x000000, lighting: 'mask' },
+        // ── 31–32: Pattern mask + screen mask ───────────────
+        L31_dotsVsHolo:      { mat1: M.patDotsWhite, mat2: M.maskHolo3, bg: 0x000000, lighting: 'mask' },
+        L32_stripesVsNeon2:  { mat1: M.patStripesVolt, mat2: M.maskNeon4, bg: 0x000000, lighting: 'mask' },
 
-        // ── J. Pattern both ─────────────────────────────────
-        dotVolt:         { mat1: M.patDotsVolt, mat2: M.patDotsVolt, bg: 0x000000, lighting: 'mask' },
-        rainWhite:       { mat1: M.patRainWhite, mat2: M.patRainWhite, bg: 0x000000, lighting: 'mask' },
-        diagVoltBoth:    { mat1: M.patDiagVolt, mat2: M.patDiagVolt, bg: 0x000000, lighting: 'mask' },
-        stripesVoltBoth: { mat1: M.patStripesVolt, mat2: M.patStripesVolt, bg: 0x000000, lighting: 'mask' },
+        // ── 33–36: Pattern mask both ────────────────────────
+        L33_dotVoltBoth:     { mat1: M.patDotsVolt, mat2: M.patDotsVolt, bg: 0x000000, lighting: 'mask' },
+        L34_rainWhiteBoth:   { mat1: M.patRainWhite, mat2: M.patRainWhite, bg: 0x000000, lighting: 'mask' },
+        L35_diagVoltBoth:    { mat1: M.patDiagVolt, mat2: M.patDiagVolt, bg: 0x000000, lighting: 'mask' },
+        L36_stripesVoltBoth: { mat1: M.patStripesVolt, mat2: M.patStripesVolt, bg: 0x000000, lighting: 'mask' },
 
+        // ── 37–42: Tiled pattern (UV) both ──────────────────
+        L37_tileDotsVolt:    { mat1: M.tileDotsVolt, mat2: M.tileDotsVolt, bg: 0x000000, lighting: 'mask' },
+        L38_tileStripesWhite:{ mat1: M.tileStripesWhite, mat2: M.tileStripesWhite, bg: 0x000000, lighting: 'mask' },
+        L39_tileDiagTan:     { mat1: M.tileDiagTan, mat2: M.tileDiagTan, bg: 0x000000, lighting: 'mask' },
+        L40_tileRainVolt:    { mat1: M.tileRainVolt, mat2: M.tileRainVolt, bg: 0x000000, lighting: 'mask' },
+        L41_tileDotsWhite:   { mat1: M.tileDotsWhite, mat2: M.tileDotsWhite, bg: 0x000000, lighting: 'mask' },
+        L42_tileDiagVolt:    { mat1: M.tileDiagVolt, mat2: M.tileDiagVolt, bg: 0xFFFFFF, lighting: 'mask' },
+
+        // ── 43–48: Tiled pattern (UV) + solid ───────────────
+        L43_tileDotsVsCarbon:   { mat1: M.tileDotsVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+        L44_tileStripesVsVolt:  { mat1: M.tileStripesVolt, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
+        L45_tileDiagVsWhite:    { mat1: M.tileDiagTan, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
+        L46_tileRainVsCarbon:   { mat1: M.tileRainWhite, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+        L47_tileDotsWhiteOnTan: { mat1: M.tileDotsWhite, mat2: M.solidTan, bg: 0x000000, lighting: 'dark' },
+        L48_tileDiagVoltOnWhite:{ mat1: M.solidWhite, mat2: M.tileDiagVolt, bg: 0xFFFFFF, lighting: 'default' },
+
+        // ── 49–54: Tiled pattern (UV) + mask ────────────────
+        L49_tileDotsVsHolo:     { mat1: M.tileDotsVolt, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
+        L50_tileStripesVsNeon:  { mat1: M.tileStripesWhite, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
+        L51_tileRainVsGlass:    { mat1: M.tileRainVolt, mat2: M.maskGlass1, bg: 0xFFFFFF, lighting: 'mask' },
+        L52_holoVsTileDiag:     { mat1: M.maskHolo3, mat2: M.tileDiagTan, bg: 0xF5F0EB, lighting: 'mask' },
+
+        // ── 55–60: Tiled video (UV) both ────────────────────
+        ...(M.tileVid0 ? {
+        L55_tileVidBothSmooth:  { mat1: M.tileVid0, mat2: M.tileVid1, bg: 0x000000, lighting: 'mask' },
+        L56_tileVidBothFluid:   { mat1: M.tileVid2, mat2: M.tileVid3, bg: 0x000000, lighting: 'mask' },
+        L57_tileVidBothVivid:   { mat1: M.tileVid4, mat2: M.tileVid5, bg: 0x000000, lighting: 'mask' },
+        L58_tileVidBothMetal:   { mat1: M.tileVid5, mat2: M.tileVid0, bg: 0xFFFFFF, lighting: 'mask' },
+
+        // ── 61–64: Tiled video (UV) + solid ─────────────────
+        L61_tileVidVsCarbon:    { mat1: M.tileVid0, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
+        L62_tileVidVsWhite:     { mat1: M.tileVid3, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
+        L63_tileVidVsVolt:      { mat1: M.solidVolt, mat2: M.tileVid4, bg: 0x000000, lighting: 'dark' },
+        L64_tileVidMetalOnWhite:{ mat1: M.tileVid5, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'mask' },
+
+        // ── 65–68: Tiled video (UV) + mask ──────────────────
+        L65_tileVidVsHolo:      { mat1: M.tileVid0, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
+        L66_tileVidVsNeon:      { mat1: M.tileVid3, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
+        L67_holoVsTileVid:      { mat1: M.maskHolo3, mat2: M.tileVid5, bg: 0x000000, lighting: 'mask' },
+        L68_glassVsTileVid:     { mat1: M.maskGlass1, mat2: M.tileVid4, bg: 0xFFFFFF, lighting: 'mask' },
+
+        // ── 69–70: Tiled video (UV) + tiled pattern (UV) ────
+        L69_tileVidVsTileDots:  { mat1: M.tileVid0, mat2: M.tileDotsVolt, bg: 0x000000, lighting: 'mask' },
+        L70_tileDiagVsTileVid:  { mat1: M.tileDiagTan, mat2: M.tileVid5, bg: 0xF5F0EB, lighting: 'mask' },
+        } : {}),
     };
 }
 
 // ─── Animation-to-Look mapping ──────────────────────────────
 const ANIM_LOOKS = [
-    'carbonOnWhite',       // 0  Orbit           — classic
-    'holoVsSolid',         // 1  Assemble         — masked L flies in, solid frame meets it
-    'uvGlassBoth',         // 2  Breathe          — UV glass texture pulses with scale
-    'holoNeonSplit',       // 3  Counter-Spin     — holo left spins vs neon right
-    'dotVoltVsCarbon',     // 4  Float            — patterned solid + plain solid bob
-    'neonMask1',           // 5  Explode          — both neon-masked explode apart
-    'glassVsCarbon',       // 6  Cascade          — glass-masked frame + carbon solid drop
-    'tanVsHolo',           // 7  Pivot            — tan solid + holo masked pivot
-    'holoGlassSplit',      // 8  Wave             — holo on one, glass on other, rocking
-    'uvHoloVsCarbon',      // 9  Dolly            — UV textured + solid zoom in/out
-    'neonVsVolt',          // 10 Flip             — volt solid + neon masked flip
-    'holoMask1',           // 11 Cross            — both holo-masked cross paths
-    'uvHoloVsMaskNeon',    // 12 Spiral           — UV holo + screen neon spiral
-    'patVsHolo',           // 13 Tilt             — dot pattern + holo mask tilt
-    'voltOnCarbon',        // 14 Shuffle          — bold volt solid rapid swap
-    'glassMask1',          // 15 Levitate         — both glass-masked levitate
-    'stripesTanVsWhite',   // 16 Domino           — white solid + tan stripes tip
-    'solidVsNeon',         // 17 Converge         — white shape meets neon-masked shape
-    'holoHoloSplit',       // 18 Roll             — two different holos rolling
-    'neonNeonSplit',       // 19 Scatter          — two different neons scatter
-    'whiteOnCarbon',       // 20 Pendulum         — clean white swing
-    'patVsNeon',           // 21 Zoom Spin        — striped volt + neon masked spin
-    'rainWhite',           // 22 Seesaw           — both rain-patterned seesaw
-    'uvGlassVsVolt',       // 23 Rise             — UV glass + volt solid rise
-    'holoMask2',           // 24 Orbit X          — both holo-masked on tan bg
-    'uvNeonVsWhite',       // 25 Stagger Spin     — white solid + UV neon spin
-    'glassGlassSplit',     // 26 Orbit Z          — two glass textures orbit each other
-    'uvHoloBoth',          // 27 Pulse            — UV holo texture on both, pulsing
-    'tanOnCarbon',         // 28 Wiper            — tan solid wiper motion
-    'dotVolt',             // 29 Breathe Deep     — both dot-patterned breathe
-    'maskGlassVsUvHolo',   // 30 Typewriter       — glass masked + UV holo slide in
-    'neonVsVolt',          // 31 Glitch           — volt vs neon jitter
-    'holoVsSolid',         // 32 Fan              — holo masked + solid fan open/close
-    'dotVoltVsCarbon',     // 33 Shear            — patterned + solid shear
-    'holoNeonSplit',       // 34 Mirror           — holo vs neon mirror rotations
-    'glassVsCarbon',       // 35 Carousel         — glass-masked + carbon carousel
+    'L01_carbonOnWhite',       // 0  Orbit
+    'L14_holoVsSolid',         // 1  Assemble
+    'L20_glassDiag',           // 2  Breathe
+    'L09_holoNeonSplit',       // 3  Counter-Spin
+    'L26_dotVoltVsCarbon',     // 4  Float
+    'L08_neonMask1',           // 5  Explode
+    'L16_glassVsCarbon',       // 6  Cascade
+    'L18_tanVsHolo',           // 7  Pivot
+    'L10_holoGlassSplit',      // 8  Wave
+    'L21_holoVsCarbon',        // 9  Dolly
+    'L15_neonVsVolt',          // 10 Flip
+    'L05_holoMask1',           // 11 Cross
+    'L24_stripesVsNeon',       // 12 Spiral
+    'L31_dotsVsHolo',          // 13 Tilt
+    'L02_voltOnCarbon',        // 14 Shuffle
+    'L07_glassMask1',          // 15 Levitate
+    'L27_diagTanVsWhite',      // 16 Domino
+    'L17_solidVsNeon',         // 17 Converge
+    'L13_holoHoloSplit',       // 18 Roll
+    'L11_neonNeonSplit',       // 19 Scatter
+    'L04_whiteOnCarbon',       // 20 Pendulum
+    'L32_stripesVsNeon2',      // 21 Zoom Spin
+    'L34_rainWhiteBoth',       // 22 Seesaw
+    'L22_glassVsVolt',         // 23 Rise
+    'L06_holoMask2',           // 24 Orbit X
+    'L23_neonVsWhite',         // 25 Stagger Spin
+    'L12_glassGlassSplit',     // 26 Orbit Z
+    'L19_holoDots',            // 27 Pulse
+    'L03_tanOnCarbon',         // 28 Wiper
+    'L33_dotVoltBoth',         // 29 Breathe Deep
+    'L25_glassVsHolo',         // 30 Typewriter
+    'L37_tileDotsVolt',        // 31 Glitch         — tiled pattern
+    'L43_tileDotsVsCarbon',    // 32 Fan             — tiled + solid
+    'L39_tileDiagTan',         // 33 Shear           — tiled pattern
+    'L55_tileVidBothSmooth',   // 34 Mirror          — tiled video
+    'L61_tileVidVsCarbon',     // 35 Carousel        — tiled video + solid
 ];
 
 // ─── Sequencer ──────────────────────────────────────────────
