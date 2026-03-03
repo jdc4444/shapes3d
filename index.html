@@ -1805,6 +1805,20 @@ addEventListener('keydown', (e) => {
         bgMode = 'color';
         updateUIColors(!isBlack);
         updateTypoColors();
+    } else if (e.key === 'e' || e.key === 'E') {
+        const TYPO_COLORS = [
+            { accent: '140,240,0', base: '255,255,255' },  // volt on white
+            { accent: '255,255,255', base: '140,240,0' },  // white on volt
+            { accent: '0,0,0', base: '0,0,0' },            // black
+            { accent: '255,255,255', base: '255,255,255' }, // white
+            { accent: '140,240,0', base: '0,0,0' },        // volt on black
+            { accent: '245,240,235', base: '245,240,235' }, // tan
+        ];
+        if (typeof typoColorIdx === 'undefined') window.typoColorIdx = 0;
+        window.typoColorIdx = (window.typoColorIdx + 1) % TYPO_COLORS.length;
+        const tc = TYPO_COLORS[window.typoColorIdx];
+        typoAccent = tc.accent;
+        typoBase = tc.base;
     } else if (e.key === ' ') {
         e.preventDefault();
         toggleCinematic();
