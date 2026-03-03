@@ -1794,6 +1794,17 @@ addEventListener('keydown', (e) => {
         dotsEl.style.display = vis;
         typoCvs.style.display = vis;
         typoVisible = allHidden;
+    } else if (e.key === 'f' || e.key === 'F') {
+        const isBlack = scene.background instanceof THREE.Color &&
+            scene.background.r < 0.1 && scene.background.g < 0.1 && scene.background.b < 0.1;
+        const col = isBlack ? 0xFFFFFF : 0x000000;
+        if (!(scene.background instanceof THREE.Color)) scene.background = new THREE.Color();
+        scene.background.set(col);
+        bgTo.set(col);
+        bgFrom.set(col);
+        bgMode = 'color';
+        updateUIColors(!isBlack);
+        updateTypoColors();
     } else if (e.key === ' ') {
         e.preventDefault();
         toggleCinematic();
