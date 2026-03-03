@@ -275,16 +275,30 @@ function createVideoMaskMaterial(videoTex) {
     });
 }
 
+let currentVideoIdx1 = -1, currentVideoIdx2 = -1; // track which videos are on each mesh
+
 function applyRandomVideoMaterials() {
     if (videoTextures.length === 0) return;
     const i1 = Math.floor(Math.random() * videoTextures.length);
     let i2 = Math.floor(Math.random() * videoTextures.length);
     if (videoTextures.length > 1 && i2 === i1) i2 = (i1 + 1) % videoTextures.length;
 
+    currentVideoIdx1 = i1;
+    currentVideoIdx2 = i2;
     const mat1 = createVideoMaskMaterial(videoTextures[i1]);
     const mat2 = createVideoMaskMaterial(videoTextures[i2]);
     mesh1.material = mat1;
     mesh2.material = getOffsetMat(mat2);
+}
+
+function applyVideoByIndex(i1, i2) {
+    if (!videoTextures.length) return;
+    i1 = Math.min(i1, videoTextures.length - 1);
+    i2 = Math.min(i2, videoTextures.length - 1);
+    currentVideoIdx1 = i1;
+    currentVideoIdx2 = i2;
+    mesh1.material = createVideoMaskMaterial(videoTextures[i1]);
+    mesh2.material = getOffsetMat(createVideoMaskMaterial(videoTextures[i2]));
 }
 
 function disableVideoMode() {
@@ -1601,7 +1615,8 @@ function captureKeyframe(now) {
         bg: scene.background instanceof THREE.Color
             ? [scene.background.r, scene.background.g, scene.background.b] : null,
         tsi: tsi, tsOff: now - tsStart,
-        vm: videoMode, om: objectsMode, ds: depthShading, cm: cinematicMode
+        vm: videoMode, om: objectsMode, ds: depthShading, cm: cinematicMode,
+        vi1: currentVideoIdx1, vi2: currentVideoIdx2
     };
     recKeyframes.push(kf);
 }
@@ -1626,8 +1641,19 @@ function applyKeyframe(kf) {
     mesh1.visible = kf.m1v;
     mesh2.visible = kf.m2v;
 
-    // Restore look materials
-    if (kf.lk && kf.lk !== currentLookKey) {
+    // Restore video mode materials
+    if (kf.vm && kf.vi1 >= 0 && kf.vi2 >= 0) {
+        videoMode = true;
+        if (kf.vi1 !== currentVideoIdx1 || kf.vi2 !== currentVideoIdx2) {
+            applyVideoByIndex(kf.vi1, kf.vi2);
+        }
+    } else if (!kf.vm && videoMode) {
+        videoMode = false;
+        // Restore look materials below
+    }
+
+    // Restore look materials (only when not in video mode)
+    if (!kf.vm && kf.lk && kf.lk !== currentLookKey) {
         currentLookIdx = kf.li;
         applyLookMaterials(kf.lk);
     }
