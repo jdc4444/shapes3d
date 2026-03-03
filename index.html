@@ -818,89 +818,6 @@ function createPatternMaskMaterial(patKey, brandColor) {
     });
 }
 
-// ─── UV-tiled shaders (actual mesh UVs, repeating texture) ──
-
-const uvTiledVert = `
-    varying vec2 vUv;
-    varying vec3 vWorldNormal;
-    void main() {
-        vUv = uv;
-        vWorldNormal = normalize(normalMatrix * normal);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-`;
-
-const uvTiledFrag = `
-    uniform sampler2D map;
-    uniform float tileRepeat;
-    uniform float useShading;
-    varying vec2 vUv;
-    varying vec3 vWorldNormal;
-    void main() {
-        vec2 uv = fract(vUv * tileRepeat);
-        vec3 tex = texture2D(map, uv).rgb;
-        float facing = abs(dot(normalize(vWorldNormal), vec3(0.0, 0.0, 1.0)));
-        float shade = mix(0.45, 1.0, facing);
-        shade = mix(1.0, shade, useShading);
-        gl_FragColor = vec4(tex * shade, 1.0);
-    }
-`;
-
-const uvTiledPatFrag = `
-    uniform sampler2D map;
-    uniform vec3 baseColor;
-    uniform float tileRepeat;
-    uniform float useShading;
-    varying vec2 vUv;
-    varying vec3 vWorldNormal;
-    void main() {
-        vec2 uv = fract(vUv * tileRepeat);
-        float lum = texture2D(map, uv).r;
-        vec3 col = baseColor * (0.55 + 0.45 * lum);
-        float facing = abs(dot(normalize(vWorldNormal), vec3(0.0, 0.0, 1.0)));
-        float shade = mix(0.4, 1.0, facing);
-        shade = mix(1.0, shade, useShading);
-        gl_FragColor = vec4(col * shade, 1.0);
-    }
-`;
-
-function createTiledTextureMaterial(tex, repeat = 3.0) {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            map: { value: tex },
-            tileRepeat: { value: repeat },
-            useShading: { value: 1.0 }
-        },
-        vertexShader: uvTiledVert,
-        fragmentShader: uvTiledFrag
-    });
-}
-
-function createTiledPatternMaterial(texKey, brandColor, repeat = 3.0) {
-    const c = new THREE.Color(brandColor);
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            map: { value: TEXTURES[texKey] },
-            baseColor: { value: new THREE.Vector3(c.r, c.g, c.b) },
-            tileRepeat: { value: repeat },
-            useShading: { value: 1.0 }
-        },
-        vertexShader: uvTiledVert,
-        fragmentShader: uvTiledPatFrag
-    });
-}
-
-function createTiledVideoMaterial(videoTex, repeat = 2.0) {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            map: { value: videoTex },
-            tileRepeat: { value: repeat },
-            useShading: { value: 1.0 }
-        },
-        vertexShader: uvTiledVert,
-        fragmentShader: uvTiledFrag
-    });
-}
 
 // ─── Look system ────────────────────────────────────────────
 let LOOKS = {};
@@ -943,27 +860,6 @@ function buildLooks() {
     M.patDiagCarbon = createPatternMaskMaterial('patDiag', 0x333333);
     M.patStripesWhite = createPatternMaskMaterial('patStripes', 0xFFFFFF);
     M.patRainCarbon = createPatternMaskMaterial('patRain', 0x333333);
-
-    // UV-tiled pattern materials (actual mesh UVs, repeating)
-    M.tileDotsVolt    = createTiledPatternMaterial('patDots', 0x8CF000, 3.0);
-    M.tileDotsWhite   = createTiledPatternMaterial('patDots', 0xFFFFFF, 3.0);
-    M.tileDotsCarbon  = createTiledPatternMaterial('patDots', 0x333333, 3.0);
-    M.tileStripesVolt = createTiledPatternMaterial('patStripes', 0x8CF000, 2.0);
-    M.tileStripesWhite= createTiledPatternMaterial('patStripes', 0xFFFFFF, 2.0);
-    M.tileDiagTan     = createTiledPatternMaterial('patDiag', 0xF5F0EB, 2.5);
-    M.tileDiagVolt    = createTiledPatternMaterial('patDiag', 0x8CF000, 2.5);
-    M.tileRainWhite   = createTiledPatternMaterial('patRain', 0xFFFFFF, 3.0);
-    M.tileRainVolt    = createTiledPatternMaterial('patRain', 0x8CF000, 3.0);
-
-    // UV-tiled video materials (actual mesh UVs, repeating)
-    if (videoTextures.length >= 6) {
-        M.tileVid0 = createTiledVideoMaterial(videoTextures[0], 2.0);  // smooth gradient
-        M.tileVid1 = createTiledVideoMaterial(videoTextures[1], 2.0);  // organic fluid
-        M.tileVid2 = createTiledVideoMaterial(videoTextures[2], 2.0);  // organic fluid alt
-        M.tileVid3 = createTiledVideoMaterial(videoTextures[3], 1.5);  // organic fluid lg
-        M.tileVid4 = createTiledVideoMaterial(videoTextures[4], 1.5);  // midjourney vivid
-        M.tileVid5 = createTiledVideoMaterial(videoTextures[10], 1.5); // metallic sim
-    }
 
     LOOKS = {
         // ── 1–4: Solid both ─────────────────────────────────
@@ -1022,51 +918,6 @@ function buildLooks() {
         L35_diagVoltBoth:    { mat1: M.patDiagVolt, mat2: M.patDiagVolt, bg: 0x000000, lighting: 'mask' },
         L36_stripesVoltBoth: { mat1: M.patStripesVolt, mat2: M.patStripesVolt, bg: 0x000000, lighting: 'mask' },
 
-        // ── 37–42: Tiled pattern (UV) both ──────────────────
-        L37_tileDotsVolt:    { mat1: M.tileDotsVolt, mat2: M.tileDotsVolt, bg: 0x000000, lighting: 'mask' },
-        L38_tileStripesWhite:{ mat1: M.tileStripesWhite, mat2: M.tileStripesWhite, bg: 0x000000, lighting: 'mask' },
-        L39_tileDiagTan:     { mat1: M.tileDiagTan, mat2: M.tileDiagTan, bg: 0x000000, lighting: 'mask' },
-        L40_tileRainVolt:    { mat1: M.tileRainVolt, mat2: M.tileRainVolt, bg: 0x000000, lighting: 'mask' },
-        L41_tileDotsWhite:   { mat1: M.tileDotsWhite, mat2: M.tileDotsWhite, bg: 0x000000, lighting: 'mask' },
-        L42_tileDiagVolt:    { mat1: M.tileDiagVolt, mat2: M.tileDiagVolt, bg: 0xFFFFFF, lighting: 'mask' },
-
-        // ── 43–48: Tiled pattern (UV) + solid ───────────────
-        L43_tileDotsVsCarbon:   { mat1: M.tileDotsVolt, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
-        L44_tileStripesVsVolt:  { mat1: M.tileStripesVolt, mat2: M.solidVolt, bg: 0x000000, lighting: 'dark' },
-        L45_tileDiagVsWhite:    { mat1: M.tileDiagTan, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
-        L46_tileRainVsCarbon:   { mat1: M.tileRainWhite, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
-        L47_tileDotsWhiteOnTan: { mat1: M.tileDotsWhite, mat2: M.solidTan, bg: 0x000000, lighting: 'dark' },
-        L48_tileDiagVoltOnWhite:{ mat1: M.solidWhite, mat2: M.tileDiagVolt, bg: 0xFFFFFF, lighting: 'default' },
-
-        // ── 49–54: Tiled pattern (UV) + mask ────────────────
-        L49_tileDotsVsHolo:     { mat1: M.tileDotsVolt, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
-        L50_tileStripesVsNeon:  { mat1: M.tileStripesWhite, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
-        L51_tileRainVsGlass:    { mat1: M.tileRainVolt, mat2: M.maskGlass1, bg: 0xFFFFFF, lighting: 'mask' },
-        L52_holoVsTileDiag:     { mat1: M.maskHolo3, mat2: M.tileDiagTan, bg: 0xF5F0EB, lighting: 'mask' },
-
-        // ── 55–60: Tiled video (UV) both ────────────────────
-        ...(M.tileVid0 ? {
-        L55_tileVidBothSmooth:  { mat1: M.tileVid0, mat2: M.tileVid1, bg: 0x000000, lighting: 'mask' },
-        L56_tileVidBothFluid:   { mat1: M.tileVid2, mat2: M.tileVid3, bg: 0x000000, lighting: 'mask' },
-        L57_tileVidBothVivid:   { mat1: M.tileVid4, mat2: M.tileVid5, bg: 0x000000, lighting: 'mask' },
-        L58_tileVidBothMetal:   { mat1: M.tileVid5, mat2: M.tileVid0, bg: 0xFFFFFF, lighting: 'mask' },
-
-        // ── 61–64: Tiled video (UV) + solid ─────────────────
-        L61_tileVidVsCarbon:    { mat1: M.tileVid0, mat2: M.solidCarbon, bg: 0x000000, lighting: 'dark' },
-        L62_tileVidVsWhite:     { mat1: M.tileVid3, mat2: M.solidWhite, bg: 0x000000, lighting: 'dark' },
-        L63_tileVidVsVolt:      { mat1: M.solidVolt, mat2: M.tileVid4, bg: 0x000000, lighting: 'dark' },
-        L64_tileVidMetalOnWhite:{ mat1: M.tileVid5, mat2: M.solidCarbon, bg: 0xFFFFFF, lighting: 'mask' },
-
-        // ── 65–68: Tiled video (UV) + mask ──────────────────
-        L65_tileVidVsHolo:      { mat1: M.tileVid0, mat2: M.maskHolo1, bg: 0x000000, lighting: 'mask' },
-        L66_tileVidVsNeon:      { mat1: M.tileVid3, mat2: M.maskNeon2, bg: 0x000000, lighting: 'mask' },
-        L67_holoVsTileVid:      { mat1: M.maskHolo3, mat2: M.tileVid5, bg: 0x000000, lighting: 'mask' },
-        L68_glassVsTileVid:     { mat1: M.maskGlass1, mat2: M.tileVid4, bg: 0xFFFFFF, lighting: 'mask' },
-
-        // ── 69–70: Tiled video (UV) + tiled pattern (UV) ────
-        L69_tileVidVsTileDots:  { mat1: M.tileVid0, mat2: M.tileDotsVolt, bg: 0x000000, lighting: 'mask' },
-        L70_tileDiagVsTileVid:  { mat1: M.tileDiagTan, mat2: M.tileVid5, bg: 0xF5F0EB, lighting: 'mask' },
-        } : {}),
     };
 }
 
@@ -1103,11 +954,11 @@ const ANIM_LOOKS = [
     'L03_tanOnCarbon',         // 28 Wiper
     'L33_dotVoltBoth',         // 29 Breathe Deep
     'L25_glassVsHolo',         // 30 Typewriter
-    'L37_tileDotsVolt',        // 31 Glitch         — tiled pattern
-    'L43_tileDotsVsCarbon',    // 32 Fan             — tiled + solid
-    'L39_tileDiagTan',         // 33 Shear           — tiled pattern
-    'L55_tileVidBothSmooth',   // 34 Mirror          — tiled video
-    'L61_tileVidVsCarbon',     // 35 Carousel        — tiled video + solid
+    'L15_neonVsVolt',          // 31 Glitch
+    'L14_holoVsSolid',         // 32 Fan
+    'L26_dotVoltVsCarbon',     // 33 Shear
+    'L09_holoNeonSplit',       // 34 Mirror
+    'L16_glassVsCarbon',       // 35 Carousel
 ];
 
 // ─── Sequencer ──────────────────────────────────────────────
