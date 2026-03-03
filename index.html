@@ -305,31 +305,14 @@ function applyVideoByIndex(i1, i2) {
 }
 
 function disableVideoMode() {
-    // Force-restore look system materials + background
+    // Restore look system materials only — don't touch background
     const lookKey = LOOK_KEYS[currentLookIdx];
     const look = LOOKS[lookKey];
     if (look) {
-        currentLookKey = null; // clear so applyLookMaterials doesn't skip
+        currentLookKey = null;
         mesh1.material = look.mat1;
         mesh2.material = getOffsetMat(look.mat2);
         currentLookKey = lookKey;
-        // Restore background
-        if (typeof look.bg === 'number') {
-            scene.background = new THREE.Color(look.bg);
-        }
-        // Restore lighting
-        const preset = LIGHT_PRESETS[look.lighting];
-        ambientLight.intensity = preset.ambient;
-        keyLight.intensity = preset.key;
-        fillLight.intensity = preset.fill;
-        rimLight.intensity = preset.rim;
-        lightTarget = preset;
-        // Restore UI colors
-        const isDark = typeof look.bg === 'number'
-            ? new THREE.Color(look.bg).getHSL({}).l < 0.5
-            : (look.uiDark !== undefined ? look.uiDark : true);
-        updateUIColors(isDark);
-        updateTypoColors();
     }
 }
 
