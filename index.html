@@ -289,10 +289,6 @@ function applyRandomVideoMaterials() {
     const mat2 = createVideoMaskMaterial(videoTextures[i2]);
     mesh1.material = mat1;
     mesh2.material = getOffsetMat(mat2);
-    // Dark bg works best with video textures
-    scene.background = new THREE.Color(0x000000);
-    updateUIColors(true);
-    updateTypoColors();
 }
 
 function disableVideoMode() {
@@ -1089,17 +1085,6 @@ function updateUI() {
 function applyLookTransition(lookKey) {
     const look = LOOKS[lookKey];
     if (!look) return;
-
-    // In video mode, keep dark bg and mask lighting — skip look transitions
-    if (videoMode) {
-        bgMode = 'color';
-        bgFrom.set(0x000000);
-        bgTo.set(0x000000);
-        lightTarget = LIGHT_PRESETS['mask'];
-        updateUIColors(true);
-        updateTypoColors();
-        return;
-    }
 
     // Capture current bg color
     if (scene.background instanceof THREE.Color) {
