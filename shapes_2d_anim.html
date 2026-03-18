@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<title>Tenarai — Motion Reel</title>
+<style>
+@font-face{font-family:'Satoshi';src:url('assets/satoshi/Satoshi-Light.otf');font-weight:300}
+@font-face{font-family:'Satoshi';src:url('assets/satoshi/Satoshi-Regular.otf');font-weight:400}
+@font-face{font-family:'Satoshi';src:url('assets/satoshi/Satoshi-Medium.otf');font-weight:500}
+@font-face{font-family:'Satoshi';src:url('assets/satoshi/Satoshi-Bold.otf');font-weight:700}
+@font-face{font-family:'Satoshi';src:url('assets/satoshi/Satoshi-Black.otf');font-weight:900}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden}
+body{background:#F5F0EB;font-family:Satoshi,system-ui,sans-serif;transition:background-color .6s ease}
+#stage{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);overflow:hidden}
+#stage svg{display:block;position:absolute;top:0;left:0;width:100%;height:100%}
+/* HUD */
+#hud{position:fixed;bottom:0;left:0;right:0;padding:20px 32px;display:flex;align-items:center;gap:16px;z-index:10}
+#counter{color:rgba(0,0,0,0.35);font-size:12px;font-weight:500;letter-spacing:.08em;min-width:60px;transition:color .4s}
+#sceneName{color:rgba(0,0,0,0.5);font-size:13px;font-weight:400;flex:1;transition:color .4s}
+#dots{display:flex;gap:6px;align-items:center}
+#dots span{width:6px;height:6px;border-radius:50%;background:rgba(0,0,0,0.15);cursor:pointer;transition:all .3s}
+#dots span.active{background:rgba(0,0,0,0.5);transform:scale(1.4)}
+#progress{position:fixed;bottom:0;left:0;height:2px;background:#8CF000;width:0;z-index:11;transition:none}
+.dark #counter,.dark #sceneName{color:rgba(255,255,255,0.35)}
+.dark #sceneName{color:rgba(255,255,255,0.5)}
+.dark #dots span{background:rgba(255,255,255,0.15)}
+.dark #dots span.active{background:rgba(255,255,255,0.5)}
+</style>
+</head><body>
+<div id="stage"></div>
+<div id="hud">
+  <div id="counter"></div>
+  <div id="sceneName"></div>
+  <div id="dots"></div>
+</div>
+<div id="progress"></div>
+
+<script>
+// ═══════════════════════════════════════
+// CONSTANTS & UTILITIES
+// ═══════════════════════════════════════
+const NS='http://www.w3.org/2000/svg';
+const C={carbon:'#000000',white:'#FFFFFF',tan:'#F5F0EB',volt:'#8CF000',
+  tan2:'#DAD2CB',tan3:'#BEB4AA',tan4:'#8B817A',tan5:'#5E5751',
+  tan6:'#322D28',tan7:'#26221E',tan8:'#191714',
+  volt2:'#5FB900',volt3:'#328200',volt4:'#235B00',
+  gray:'#666660',darkGray:'#333330',volt8:'#0F190F'};
+const F='Satoshi, system-ui, sans-serif';
+const W=1000,H=700; // viewBox dimensions
+
+// ─── EASING ───
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+const easeOut=t=>1-Math.pow(1-t,3);
+const easeIn=t=>t*t*t;
+const bounce=t=>{const n=7.5625,d=2.75;if(t<1/d)return n*t*t;if(t<2/d)return n*(t-=1.5/d)*t+.75;if(t<2.5/d)return n*(t-=2.25/d)*t+.9375;return n*(t-=2.625/d)*t+.984375;};
+const spring=t=>1-Math.cos(t*Math.PI*2.5)*Math.exp(-6*t);
+const springHard=t=>1-Math.cos(t*Math.PI*3)*Math.exp(-5*t);
+const smoothPing=t=>Math.sin(t*Math.PI);
+const lerp=(a,b,t)=>a+(b-a)*t;
+const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+// Stagger: returns 0-1 for element i of n, spread controls overlap
+function stag(t,i,n,spread){
+  spread=spread||0.4;
+  const start=i/(n-1)*(1-spread);
+  return clamp((t-start)/spread,0,1);
+}
+
+// ─── SVG HELPERS ───
+function el(tag,a,p){const e=document.createElementNS(NS,tag);if(a)for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(p)p.appendChild(e);return e;}
+function rect(p,x,y,w,h,fill,a){return el('rect',{x,y,width:w,height:h,fill,...(a||{})},p);}
+function path(p,d,fill,a){return el('path',{d,fill,...(a||{})},p);}
+function txt(p,x,y,content,size,o){
+  const t=el('text',{x,y,'font-family':F,'font-size':size,'font-weight':(o&&o.w)||400,fill:(o&&o.c)||C.carbon,'text-anchor':(o&&o.a)||'start','dominant-baseline':(o&&o.b)||'auto',...((o&&o.extra)||{})},p);
+  t.textContent=content;return t;
+}
+function g(p,id,a){return el('g',{id,...(a||{})},p);}
+function tf(el,s){el.setAttribute('transform',s);}
+function op(el,v){el.style.opacity=v;}
+
+// ─── SHAPE PATHS ───
+function lD(x,y,s,t,c){
+  switch(c){
+    case 0:return`M${x} ${y}L${x+s} ${y}L${x+s} ${y+t}L${x+t} ${y+t}L${x+t} ${y+s}L${x} ${y+s}Z`;
+    case 1:return`M${x} ${y}L${x+s} ${y}L${x+s} ${y+s}L${x+s-t} ${y+s}L${x+s-t} ${y+t}L${x} ${y+t}Z`;
+    case 2:return`M${x+s-t} ${y}L${x+s} ${y}L${x+s} ${y+s}L${x} ${y+s}L${x} ${y+s-t}L${x+s-t} ${y+s-t}Z`;
+    case 3:return`M${x} ${y}L${x+t} ${y}L${x+t} ${y+s-t}L${x+s} ${y+s-t}L${x+s} ${y+s}L${x} ${y+s}Z`;
+  }
+}
+function frameLd(x,y,s,t,c,b){return lD(x,y,s,t,c)+' '+lD(x+b,y+b,s-2*b,t-2*b,c);}
+function arrowDiag(x,y,s,t,c){
+  const d=t*0.7;
+  switch(c){
+    case 0:return`M${x+s} ${y+s}L${x+s-d} ${y+s}L${x} ${y+d}L${x} ${y}L${x+d} ${y}L${x+s} ${y+s-d}Z`;
+    case 1:return`M${x} ${y+s}L${x+d} ${y+s}L${x+s} ${y+d}L${x+s} ${y}L${x+s-d} ${y}L${x} ${y+s-d}Z`;
+    case 2:return`M${x} ${y}L${x+d} ${y}L${x+s} ${y+s-d}L${x+s} ${y+s}L${x+s-d} ${y+s}L${x} ${y+d}Z`;
+    case 3:return`M${x+s} ${y}L${x+s-d} ${y}L${x} ${y+s-d}L${x} ${y+s}L${x+d} ${y+s}L${x+s} ${y+d}Z`;
+  }
+}
+function fullArrowD(x,y,s,t,c){return lD(x,y,s,t,c)+' '+arrowDiag(x,y,s,t,c);}
+function arcD(cx,cy,r1,r2,a1,a2){
+  const lg=(a2-a1)>Math.PI?1:0;
+  return`M${cx+r1*Math.cos(a1)} ${cy+r1*Math.sin(a1)}A${r1} ${r1} 0 ${lg} 1 ${cx+r1*Math.cos(a2)} ${cy+r1*Math.sin(a2)}L${cx+r2*Math.cos(a2)} ${cy+r2*Math.sin(a2)}A${r2} ${r2} 0 ${lg} 0 ${cx+r2*Math.cos(a1)} ${cy+r2*Math.sin(a1)}Z`;
+}
+
+// ─── PATTERN DEFS (inline per SVG) ───
+function addDefs(svg){
+  const d=el('defs',{},svg);
+  // Dots on light
+  const pd=el('pattern',{id:'pat-dots',patternUnits:'userSpaceOnUse',width:10,height:10},d);
+  el('circle',{cx:5,cy:5,r:1.5,fill:C.carbon},pd);
+  // Vlines
+  const pv=el('pattern',{id:'pat-vlines',patternUnits:'userSpaceOnUse',width:6,height:6},d);
+  el('line',{x1:3,y1:0,x2:3,y2:6,stroke:C.carbon,'stroke-width':1},pv);
+  // Dlines
+  const pdl=el('pattern',{id:'pat-dlines',patternUnits:'userSpaceOnUse',width:8.49,height:8.49,patternTransform:'rotate(45)'},d);
+  el('line',{x1:4.24,y1:0,x2:4.24,y2:8.49,stroke:C.carbon,'stroke-width':1},pdl);
+  // Rain
+  const pr=el('pattern',{id:'pat-rain',patternUnits:'userSpaceOnUse',width:11,height:16},d);
+  el('line',{x1:5.5,y1:3,x2:5.5,y2:10,stroke:C.carbon,'stroke-width':1,'stroke-linecap':'round'},pr);
+  // Grid dots
+  const pg=el('pattern',{id:'pat-grid',patternUnits:'userSpaceOnUse',width:18,height:18},d);
+  el('circle',{cx:9,cy:9,r:1.8,fill:'#ccc'},pg);
+  // Tan patterns
+  const pt=el('pattern',{id:'pat-dots-t',patternUnits:'userSpaceOnUse',width:14,height:14},d);
+  el('circle',{cx:7,cy:7,r:2,fill:C.tan4},pt);
+  const pvt=el('pattern',{id:'pat-vlines-t',patternUnits:'userSpaceOnUse',width:8,height:8},d);
+  el('line',{x1:4,y1:0,x2:4,y2:8,stroke:C.tan4,'stroke-width':1},pvt);
+  const pdt=el('pattern',{id:'pat-dlines-t',patternUnits:'userSpaceOnUse',width:8.49,height:8.49,patternTransform:'rotate(45)'},d);
+  el('line',{x1:4.24,y1:0,x2:4.24,y2:8.49,stroke:C.tan4,'stroke-width':1},pdt);
+  const prt=el('pattern',{id:'pat-rain-t',patternUnits:'userSpaceOnUse',width:11,height:16},d);
+  el('line',{x1:5.5,y1:3,x2:5.5,y2:10,stroke:C.tan4,'stroke-width':1,'stroke-linecap':'round'},prt);
+  // Light on dark
+  const pdl2=el('pattern',{id:'pat-dots-l',patternUnits:'userSpaceOnUse',width:10,height:10},d);
+  el('circle',{cx:5,cy:5,r:1.5,fill:C.tan},pdl2);
+  const pvl=el('pattern',{id:'pat-vlines-l',patternUnits:'userSpaceOnUse',width:6,height:6},d);
+  el('line',{x1:3,y1:0,x2:3,y2:6,stroke:C.tan,'stroke-width':1},pvl);
+  const pdll=el('pattern',{id:'pat-dlines-l',patternUnits:'userSpaceOnUse',width:8.49,height:8.49,patternTransform:'rotate(45)'},d);
+  el('line',{x1:4.24,y1:0,x2:4.24,y2:8.49,stroke:C.tan,'stroke-width':1},pdll);
+  return d;
+}
+
+// ═══════════════════════════════════════
+// SCENE DEFINITIONS
+// ═══════════════════════════════════════
+const scenes=[];
+
+// Helper: create SVG for a scene
+function mkSVG(){
+  const svg=el('svg',{viewBox:`0 0 ${W} ${H}`,xmlns:NS,width:'100%',height:'100%',preserveAspectRatio:'xMidYMid meet'});
+  addDefs(svg);
+  return svg;
+}
+
+// ─── 4. Arrow Draw ───
+scenes.push({name:'Arrow Draw',bg:C.tan,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.tan);
+  // Draw-on effect via stroke
+  const d=fullArrowD(310,120,380,95,1);
+  r.arrow=path(svg,d,'none',{stroke:C.carbon,'stroke-width':3});
+  r.fill=path(svg,d,C.carbon);op(r.fill,0);
+  // Calculate path length
+  const len=r.arrow.getTotalLength();
+  r.arrow.setAttribute('stroke-dasharray',len);
+  r.arrow.setAttribute('stroke-dashoffset',len);
+  r.len=len;
+  return r;
+},animate(t,r){
+  // Draw stroke
+  const p1=ease(clamp(t*2,0,1));
+  r.arrow.setAttribute('stroke-dashoffset',r.len*(1-p1));
+  // Fill in after stroke completes
+  const p2=easeOut(clamp((t-0.55)*3,0,1));
+  op(r.fill,p2);op(r.arrow,1-p2);
+}});
+
+// ─── 5. Motifs Cascade ───
+scenes.push({name:'Motifs Cascade',bg:C.white,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.white);
+  r.blocks=[];
+  const ms=70,mt=ms*.48,sp=95;
+  // Row 1: solid blocks
+  for(let c=0;c<4;c++){const p=path(svg,lD(160+c*sp,180,ms,mt,c),C.carbon);r.blocks.push(p);op(p,0);}
+  // Row 2: frame blocks
+  for(let c=0;c<4;c++){const p=path(svg,frameLd(160+c*sp,180,ms,mt,c,mt*.16),C.carbon,{'fill-rule':'evenodd'});r.blocks.push(p);op(p,0);}
+  // Row 3: arrows
+  r.arrows=[];
+  for(let c=0;c<4;c++){const p=path(svg,fullArrowD(160+c*sp,380,ms,mt*.9,c),C.carbon);r.arrows.push(p);op(p,0);}
+  r.title=txt(svg,160,150,'Corner Block',20,{w:700});op(r.title,0);
+  r.title2=txt(svg,160,360,'Diagonal Arrow',20,{w:700});op(r.title2,0);
+  return r;
+},animate(t,r){
+  // Title
+  op(r.title,easeOut(clamp(t*4,0,1)));
+  tf(r.title,`translate(0,${lerp(20,0,easeOut(clamp(t*4,0,1)))})`);
+  // Blocks cascade
+  r.blocks.forEach((b,i)=>{
+    const p=spring(stag(t,i,8,0.5));
+    op(b,p);tf(b,`translate(0,${lerp(40,0,p)}) scale(${lerp(0.7,1,p)})`);
+  });
+  // Title 2
+  op(r.title2,easeOut(clamp((t-0.4)*4,0,1)));
+  // Arrows
+  r.arrows.forEach((a,i)=>{
+    const p=spring(stag(clamp((t-0.5)*2,0,1),i,4,0.4));
+    op(a,p);tf(a,`translate(0,${lerp(30,0,p)})`);
+  });
+}});
+
+// ─── 6. Color Flood ───
+scenes.push({name:'Color Flood',bg:C.white,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.white);
+  const d=svg.querySelector('defs')||el('defs',{},svg);
+  // 4 full-bleed color layers with L-shape clip masks
+  r.floods=[];
+  const colors=[C.carbon,C.tan,C.volt,C.white];
+  const names=['Carbon','Tan','Volt','White'];
+  colors.forEach((c,i)=>{
+    const cpId='clip-flood-'+i;
+    const cp=el('clipPath',{id:cpId},d);
+    // L-shape clip that slides across
+    const clipEl=el('path',{d:lD(-W,0,W*2,H,i%4)},cp);
+    const layer=rect(svg,0,0,W,H,c,{'clip-path':'url(#'+cpId+')',opacity:0});
+    const label=txt(svg,W/2,H/2+15,names[i],72,{w:900,c:c===C.carbon||c===C.volt?C.white:C.carbon,a:'middle'});
+    op(label,0);
+    r.floods.push({layer,clipEl,label,cp:cpId});
+  });
+  return r;
+},animate(t,r){
+  r.floods.forEach((f,i)=>{
+    const phase=0.25;
+    const start=i*phase;
+    const p=easeOut(clamp((t-start)/phase,0,1));
+    const exitP=i<3?easeIn(clamp((t-(start+phase))/0.1,0,1)):0;
+    f.layer.setAttribute('opacity',p>0?1-exitP:0);
+    // Slide clip from left
+    const tx=lerp(-W*1.5,0,p);
+    f.clipEl.setAttribute('transform',`translate(${tx},0)`);
+    // Label
+    const lp=spring(clamp((t-start-0.05)*6,0,1));
+    const lo=clamp((t-start-0.02)*8,0,1)*(i<3?1-clamp((t-(start+phase-0.05))*8,0,1):1);
+    op(f.label,lo);
+    tf(f.label,`translate(0,${lerp(30,0,lp)}) scale(${lerp(0.85,1,lp)})`);
+  });
+}});
+
+// ─── 10. Stat Count ───
+scenes.push({name:'Stat Count',bg:C.carbon,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.carbon);
+  r.num=txt(svg,250,420,'0',260,{w:300,c:'none',extra:{stroke:C.volt,'stroke-width':2.5}});
+  r.pct=txt(svg,680,250,'%',100,{w:300,c:'none',extra:{stroke:C.volt,'stroke-width':2.5}});
+  op(r.pct,0);
+  r.tri=path(svg,'M720 120L780 120L750 75Z',C.volt);op(r.tri,0);
+  r.label1=txt(svg,250,540,'increased productivity',24,{c:C.white});op(r.label1,0);
+  r.label2=txt(svg,250,574,'using Google Cloud',24,{c:C.white});op(r.label2,0);
+  return r;
+},animate(t,r){
+  // Count up
+  const count=Math.round(lerp(0,41,easeOut(clamp(t*2,0,1))));
+  r.num.textContent=count;
+  // Percentage sign
+  const pp=spring(clamp((t-0.4)*3,0,1));
+  op(r.pct,pp);tf(r.pct,`translate(0,${lerp(20,0,pp)})`);
+  // Triangle bounces
+  const tp=bounce(clamp((t-0.55)*3,0,1));
+  op(r.tri,tp);tf(r.tri,`translate(0,${lerp(-40,0,tp)})`);
+  // Labels
+  const lp=easeOut(clamp((t-0.65)*3,0,1));
+  op(r.label1,lp);tf(r.label1,`translate(0,${lerp(15,0,lp)})`);
+  op(r.label2,easeOut(clamp((t-0.72)*3,0,1)));
+}});
+
+// ─── 11. Living Grid ───
+scenes.push({name:'Living Grid',bg:C.white,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.white);
+  // Individual dots for animation
+  r.dots=[];
+  const sp=38,cols=Math.ceil(W/sp)+2,rows=Math.ceil(H/sp)+2;
+  const cx=W/2,cy=H/2;
+  for(let row=0;row<rows;row++){
+    for(let col=0;col<cols;col++){
+      const dx=col*sp-sp,dy=row*sp-sp;
+      const dist=Math.sqrt((dx-cx)**2+(dy-cy)**2);
+      const dot=el('circle',{cx:dx,cy:dy,r:4,fill:'#ccc'},svg);
+      op(dot,0);
+      r.dots.push({el:dot,x:dx,y:dy,dist});
+    }
+  }
+  // Animated pattern for the block
+  const d=svg.querySelector('defs')||el('defs',{},svg);
+  r.blockPat=el('pattern',{id:'ap-block-dots',patternUnits:'userSpaceOnUse',width:14,height:14},d);
+  el('circle',{cx:7,cy:7,r:2.2,fill:C.white},r.blockPat);
+  // Data block
+  r.block=rect(svg,90,340,300,260,C.carbon);op(r.block,0);
+  r.blockOverlay=rect(svg,90,340,300,260,'url(#ap-block-dots)',{opacity:0.3});op(r.blockOverlay,0);
+  r.q1=txt(svg,110,390,'Q1',28,{w:700,c:C.white});op(r.q1,0);
+  r.pct1=txt(svg,110,460,'25%',48,{w:300,c:C.white});op(r.pct1,0);
+  r.pct2=txt(svg,480,320,'75%',140,{w:900});op(r.pct2,0);
+  r.q2=txt(svg,480,140,'Q2',28,{w:700});op(r.q2,0);
+  r.maxDist=Math.sqrt(cx*cx+cy*cy);
+  return r;
+},animate(t,r){
+  const cx=W/2,cy=H/2;
+  // Radial wave: dots pulse outward from center
+  r.dots.forEach(d=>{
+    const normDist=d.dist/r.maxDist;
+    const wave=Math.sin((t*6-normDist*3)*Math.PI);
+    const appear=easeOut(clamp((t-normDist*0.3)*4,0,1));
+    const sc=1+wave*0.4*appear;
+    // Dots near block turn volt
+    const nearBlock=d.x>80&&d.x<400&&d.y>330&&d.y<610;
+    const voltT=nearBlock?clamp((t-0.4)*3,0,1):0;
+    if(voltT>0)d.el.setAttribute('fill',`rgb(${Math.round(lerp(204,140,voltT))},${Math.round(lerp(204,207,voltT))},${Math.round(lerp(204,0,voltT))})`);
+    d.el.setAttribute('r',4*sc);
+    op(d.el,appear*0.8);
+  });
+  // Animated block pattern
+  r.blockPat.setAttribute('patternTransform',`translate(${t*80},${t*40})`);
+  // Block slides up
+  const bp=spring(clamp((t-0.2)*2,0,1));
+  op(r.block,bp);tf(r.block,`translate(0,${lerp(80,0,bp)})`);
+  op(r.blockOverlay,bp*0.3);tf(r.blockOverlay,`translate(0,${lerp(80,0,bp)})`);
+  op(r.q1,bp);tf(r.q1,`translate(0,${lerp(80,0,bp)})`);
+  // Count up
+  const count=Math.round(lerp(0,25,easeOut(clamp((t-0.3)*2.5,0,1))));
+  r.pct1.textContent=count+'%';
+  op(r.pct1,bp);tf(r.pct1,`translate(0,${lerp(80,0,bp)})`);
+  // Q2 and 75%
+  op(r.q2,easeOut(clamp((t-0.35)*3,0,1)));
+  const pp=spring(clamp((t-0.45)*2,0,1));
+  const count2=Math.round(lerp(0,75,easeOut(clamp((t-0.45)*2,0,1))));
+  r.pct2.textContent=count2+'%';
+  op(r.pct2,pp);tf(r.pct2,`translate(${W/2},${H/2}) scale(${lerp(0.5,1,pp)}) translate(${-W/2},${-H/2})`);
+}});
+
+// ─── 12. Pattern Bars ───
+scenes.push({name:'Pattern Bars',bg:C.white,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.white);
+  const d=svg.querySelector('defs')||el('defs',{},svg);
+  // Scene-local animated patterns
+  r.pats=[];
+  const patDefs=[
+    {id:'abp-dots',fn:p=>{el('circle',{cx:7,cy:7,r:2.2,fill:C.tan4},p)},w:14,h:14},
+    {id:'abp-vlines',fn:p=>{el('line',{x1:4,y1:0,x2:4,y2:8,stroke:C.tan4,'stroke-width':1.2},p)},w:8,h:8},
+    {id:'abp-rain',fn:p=>{el('line',{x1:5.5,y1:3,x2:5.5,y2:10,stroke:C.tan4,'stroke-width':1,'stroke-linecap':'round'},p)},w:11,h:16},
+    {id:'abp-dlines',fn:p=>{el('line',{x1:4.24,y1:0,x2:4.24,y2:8.49,stroke:C.tan4,'stroke-width':1.2},p)},w:8.49,h:8.49}
+  ];
+  patDefs.forEach(pd=>{
+    const pat=el('pattern',{id:pd.id,patternUnits:'userSpaceOnUse',width:pd.w,height:pd.h},d);
+    pd.fn(pat);
+    r.pats.push(pat);
+  });
+  r.bars=[];r.labels=[];r.caps=[];
+  const data=[{pct:25,q:'Q1',pat:'url(#abp-dots)'},{pct:72,q:'Q2',pat:'url(#abp-vlines)'},{pct:75,q:'Q3',pat:'url(#abp-rain)'},{pct:79,q:'Q4',pat:'url(#abp-dlines)'}];
+  const bw=200,gap=25,bx=75;
+  data.forEach((dd,i)=>{
+    const x=bx+i*(bw+gap);
+    const barH=H-60; // Full height bars
+    const gp=g(svg);
+    rect(gp,x,30,bw,barH,C.tan);
+    rect(gp,x,30,bw,barH,dd.pat);
+    r.bars.push(gp);op(gp,0);
+    const cap=rect(svg,x,30,bw,4,C.carbon);r.caps.push(cap);op(cap,0);
+    const lb=g(svg);
+    txt(lb,x+8,80,'0%',48,{w:900});
+    txt(lb,x+bw/2,H-15,dd.q,18,{w:500,a:'middle'});
+    r.labels.push({el:lb,pct:dd.pct,numEl:null});op(lb,0);
+    r.labels[i].numEl=lb.querySelector('text');
+  });
+  return r;
+},animate(t,r){
+  // Animate patterns continuously
+  const dt=t*300;
+  r.pats[0].setAttribute('patternTransform',`translate(0,${-dt*0.5})`); // dots scroll up
+  r.pats[1].setAttribute('patternTransform',`translate(${Math.sin(t*Math.PI*4)*4},0)`); // vlines wave
+  r.pats[2].setAttribute('patternTransform',`translate(0,${dt*0.8})`); // rain falls
+  r.pats[3].setAttribute('patternTransform',`rotate(${45+t*15})`); // dlines rotate
+  // Bars scale in
+  r.bars.forEach((b,i)=>{
+    const p=spring(stag(clamp(t*1.2,0,1),i,4,0.4));
+    tf(b,`translate(${75+i*225+100},0) scale(${p},1) translate(${-(75+i*225+100)},0)`);
+    op(b,p);
+    // Cap slams from top
+    const cp=bounce(clamp(stag(clamp(t*1.2,0,1),i,4,0.4)*1.3-0.3,0,1));
+    tf(r.caps[i],`translate(0,${lerp(-50,0,cp)})`);op(r.caps[i],clamp(stag(clamp(t*1.2,0,1),i,4,0.4)*2,0,1));
+    // Labels + count up
+    const lp=easeOut(stag(clamp(t*1.2,0,1),i,4,0.4));
+    op(r.labels[i].el,lp);
+    if(r.labels[i].numEl){
+      const count=Math.round(lerp(0,r.labels[i].pct,easeOut(clamp(stag(clamp(t*1.2,0,1),i,4,0.4)*1.5-0.5,0,1))));
+      r.labels[i].numEl.textContent=count+'%';
+    }
+  });
+}});
+
+// ─── 13. Donut Build ───
+scenes.push({name:'Donut Build',bg:C.white,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.white);
+  r.title=txt(svg,300,80,'Data visualization',36,{w:300});op(r.title,0);
+  const cx=W/2,cy=400,or=200,ir=125;
+  r.segs=[];r.labels=[];
+  const data=[{pct:50,fill:'url(#pat-dots)'},{pct:25,fill:C.carbon},{pct:10,fill:'url(#pat-vlines)'},{pct:10,fill:'url(#pat-dlines)'},{pct:5,fill:'url(#pat-rain)'}];
+  let a=-Math.PI/2;
+  data.forEach((d,i)=>{
+    const sw=d.pct/100*Math.PI*2;
+    const gp=g(svg);
+    r.segs.push({group:gp,cx,cy,or,ir,startAngle:a,sweep:sw,fill:d.fill,pct:d.pct});
+    // Label
+    const la=a+sw/2,lr=or+40;
+    const lb=g(svg);
+    txt(lb,cx+lr*Math.cos(la),cy+lr*Math.sin(la)-6,d.pct+'%',16,{w:500,a:'middle'});
+    txt(lb,cx+lr*Math.cos(la),cy+lr*Math.sin(la)+14,'lorem ipsum',12,{a:'middle'});
+    r.labels.push(lb);op(lb,0);
+    a+=sw;
+  });
+  return r;
+},animate(t,r){
+  op(r.title,easeOut(clamp(t*3,0,1)));
+  r.segs.forEach((s,i)=>{
+    const p=easeOut(stag(clamp(t*1.4,0,1),i,5,0.35));
+    // Rebuild arc with animated sweep
+    s.group.innerHTML='';
+    const currentSweep=s.sweep*p;
+    if(currentSweep>0.001){
+      const tanBase=path(s.group,arcD(s.cx,s.cy,s.or,s.ir,s.startAngle,s.startAngle+currentSweep),C.tan);
+      path(s.group,arcD(s.cx,s.cy,s.or,s.ir,s.startAngle,s.startAngle+currentSweep),s.fill);
+    }
+    op(r.labels[i],easeOut(clamp(stag(clamp(t*1.4,0,1),i,5,0.35)*1.5-0.5,0,1)));
+  });
+}});
+
+// ─── 14. Donut Dark ───
+scenes.push({name:'Donut Dark',bg:C.carbon,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.carbon);
+  r.title=txt(svg,80,80,'Dark mode',36,{w:300,c:C.white});op(r.title,0);
+  const cx=W/2,cy=400,or=195,ir=120;
+  r.segs=[];r.labels=[];
+  const data=[{pct:50,fill:'url(#pat-dots-l)'},{pct:25,fill:C.tan3},{pct:10,fill:'url(#pat-vlines-l)'},{pct:10,fill:'url(#pat-dlines-l)'},{pct:5,fill:C.volt}];
+  let a=-Math.PI/2;
+  data.forEach((d,i)=>{
+    const sw=d.pct/100*Math.PI*2;
+    const gp=g(svg);
+    r.segs.push({group:gp,cx,cy,or,ir,startAngle:a,sweep:sw,fill:d.fill,baseFill:d.fill===C.volt?C.volt:C.carbon});
+    const la=a+sw/2,lr=or+40;
+    const lb=g(svg);
+    txt(lb,cx+lr*Math.cos(la),cy+lr*Math.sin(la)-6,d.pct+'%',15,{w:500,c:C.white,a:'middle'});
+    r.labels.push(lb);op(lb,0);
+    a+=sw;
+  });
+  return r;
+},animate(t,r){
+  op(r.title,easeOut(clamp(t*3,0,1)));
+  r.segs.forEach((s,i)=>{
+    const p=easeOut(stag(clamp(t*1.4,0,1),i,5,0.35));
+    s.group.innerHTML='';
+    const sw=s.sweep*p;
+    if(sw>0.001){
+      path(s.group,arcD(s.cx,s.cy,s.or,s.ir,s.startAngle,s.startAngle+sw),s.baseFill);
+      path(s.group,arcD(s.cx,s.cy,s.or,s.ir,s.startAngle,s.startAngle+sw),s.fill);
+    }
+    op(r.labels[i],easeOut(clamp(stag(clamp(t*1.4,0,1),i,5,0.35)*1.5-0.5,0,1)));
+  });
+}});
+
+// ─── 16. Gradient Clip ───
+scenes.push({name:'Gradient Clip',bg:C.carbon,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.carbon);
+  const d=el('defs',{},svg);
+  r.grad=el('linearGradient',{id:'g-clip2',x1:'0%',y1:'0%',x2:'100%',y2:'100%'},d);
+  r.s1=el('stop',{offset:'0%','stop-color':'#4488ff'},r.grad);
+  r.s2=el('stop',{offset:'50%','stop-color':'#88ff88'},r.grad);
+  r.s3=el('stop',{offset:'100%','stop-color':'#aaddff'},r.grad);
+  const cp=el('clipPath',{id:'clip-sf2'},d);
+  el('path',{d:lD(250,100,450,225,0)},cp);
+  r.gradRect=rect(svg,0,0,W,H,'url(#g-clip2)',{'clip-path':'url(#clip-sf2)'});
+  r.txt1=txt(svg,490,160,'Agentforce vibes',24,{w:500,c:C.white});op(r.txt1,0);
+  r.txt2=txt(svg,490,192,'at Dreamforce 2026',24,{w:500,c:C.white});op(r.txt2,0);
+  return r;
+},animate(t,r){
+  // Scale in
+  const p=spring(clamp(t*2,0,1));
+  tf(r.gradRect,`translate(${W/2},${H/2}) scale(${lerp(0,1,p)}) translate(${-W/2},${-H/2})`);
+  // Shift gradient
+  r.grad.setAttribute('gradientTransform',`rotate(${t*180},0.5,0.5)`);
+  // Text
+  const tp=easeOut(clamp((t-0.4)*2.5,0,1));
+  op(r.txt1,tp);tf(r.txt1,`translate(${lerp(30,0,tp)},0)`);
+  const tp2=easeOut(clamp((t-0.5)*2.5,0,1));
+  op(r.txt2,tp2);tf(r.txt2,`translate(${lerp(30,0,tp2)},0)`);
+}});
+
+// ─── 17. Text Stagger ───
+scenes.push({name:'Text Stagger',bg:C.carbon,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.carbon);
+  r.items=[];
+  const entries=[
+    {title:'Emotion outperforms algorithms',body:'when AI handles the systems and designers lead with feeling.'},
+    {title:'Speak to write',body:"as Speechify\u2019s new Chrome extension pairs voice typing with an AI assistant."}
+  ];
+  entries.forEach((e,i)=>{
+    const gp=g(svg);
+    const y=180+i*200;
+    txt(gp,100,y,e.title,24,{w:700,c:C.white});
+    txt(gp,100,y+34,e.body,20,{c:C.gray});
+    const arrow=path(gp,fullArrowD(820,y-30,48,14,1),C.white);
+    r.items.push(gp);op(gp,0);
+    if(i<entries.length-1){const ln=el('line',{x1:100,y1:y+80,x2:900,y2:y+80,stroke:'#333','stroke-width':1},svg);}
+  });
+  return r;
+},animate(t,r){
+  r.items.forEach((item,i)=>{
+    const p=easeOut(stag(clamp(t*1.5,0,1),i,2,0.4));
+    op(item,p);tf(item,`translate(${lerp(-60,0,p)},0)`);
+  });
+}});
+
+// ─── 18. Footer Cascade ───
+scenes.push({name:'Footer Cascade',bg:C.carbon,build(svg){
+  const r={};r.bg=rect(svg,0,0,W,H,C.carbon);
+  r.heading=txt(svg,80,140,"Let\u2019s connect",64,{w:300,c:C.white});op(r.heading,0);
+  r.arrow=path(svg,fullArrowD(860,80,60,17,1),C.white);op(r.arrow,0);
+  r.nav=g(svg);
+  ['Ignis','GCC','What we do','Who we are','Insights','Careers'].forEach((t2,i)=>{
+    txt(r.nav,80+i*120,220,t2,15,{c:C.gray});
+  });
+  op(r.nav,0);
+  r.watermark=txt(svg,40,580,'Tenarai',220,{w:900,c:'#1a1a1a'});op(r.watermark,0);
+  return r;
+},animate(t,r){
+  const hp=easeOut(clamp(t*2.5,0,1));
+  op(r.heading,hp);tf(r.heading,`translate(0,${lerp(-30,0,hp)})`);
+  const ap=spring(clamp((t-0.2)*3,0,1));
+  op(r.arrow,ap);tf(r.arrow,`translate(${lerp(40,0,ap)},${lerp(-20,0,ap)})`);
+  op(r.nav,easeOut(clamp((t-0.3)*2.5,0,1)));
+  const wp=easeOut(clamp((t-0.4)*1.5,0,1));
+  op(r.watermark,wp*0.6);
+  tf(r.watermark,`translate(${W/2},${H/2}) scale(${lerp(0.6,1,wp)}) translate(${-W/2},${-H/2})`);
+}});
+
+// ═══════════════════════════════════════
+// ENGINE
+// ═══════════════════════════════════════
+const DURATION=5000;
+const TRANS=600;
+let currentIdx=0;
+let sceneStart=0;
+let transStart=0;
+let prevSVG=null;
+let currSVG=null;
+let currRefs=null;
+let inTransition=false;
+let paused=false;
+let autoAdvance=true;
+
+const stage=document.getElementById('stage');
+const counterEl=document.getElementById('counter');
+const nameEl=document.getElementById('sceneName');
+const dotsEl=document.getElementById('dots');
+const progressEl=document.getElementById('progress');
+
+// Size stage
+function resize(){
+  const vw=window.innerWidth,vh=window.innerHeight;
+  const scale=Math.min(vw/W,vh/H)*0.92;
+  stage.style.width=W*scale+'px';
+  stage.style.height=H*scale+'px';
+}
+resize();
+window.addEventListener('resize',resize);
+
+// Build dots
+scenes.forEach((_,i)=>{
+  const d=document.createElement('span');
+  d.addEventListener('click',()=>switchTo(i));
+  dotsEl.appendChild(d);
+});
+
+// ─── Build & Switch ───
+function buildScene(idx){
+  const svg=mkSVG();
+  const sc=scenes[idx];
+  const refs=sc.build(svg);
+  return{svg,refs};
+}
+
+function switchTo(idx){
+  if(idx===currentIdx&&currSVG)return;
+  const sc=scenes[idx];
+  // Build new
+  const{svg,refs}=buildScene(idx);
+  svg.style.opacity='0';
+  stage.appendChild(svg);
+  // Remove ALL previous SVGs from stage except new one
+  Array.from(stage.querySelectorAll('svg')).forEach(s=>{if(s!==svg&&s!==currSVG)s.remove();});
+  prevSVG=null;
+  // Transition from current
+  if(currSVG){
+    prevSVG=currSVG;
+    inTransition=true;
+    transStart=performance.now();
+  }
+  currSVG=svg;
+  currRefs=refs;
+  currentIdx=idx;
+  sceneStart=performance.now();
+  // Background
+  document.body.style.backgroundColor=sc.bg;
+  const isDark=sc.bg===C.carbon||sc.bg===C.volt8;
+  document.body.classList.toggle('dark',isDark);
+  updateHUD();
+}
+
+function updateHUD(){
+  counterEl.textContent=String(currentIdx+1).padStart(2,'0')+' / '+String(scenes.length).padStart(2,'0');
+  nameEl.textContent=scenes[currentIdx].name;
+  dotsEl.querySelectorAll('span').forEach((d,i)=>d.classList.toggle('active',i===currentIdx));
+}
+
+// ─── Animation Loop ───
+let loopScheduled=false;
+function scheduleLoop(){if(!loopScheduled){loopScheduled=true;requestAnimationFrame(n=>{loopScheduled=false;loop(n);});}}
+function loop(now){
+  if(!now)now=performance.now();
+  scheduleLoop();
+  // Handle transitions even when paused
+  if(inTransition){
+    const blend=ease(Math.min((now-transStart)/TRANS,1));
+    if(prevSVG)prevSVG.style.opacity=String(1-blend);
+    if(currSVG)currSVG.style.opacity=String(blend);
+    if(blend>=1){inTransition=false;if(prevSVG){prevSVG.remove();prevSVG=null;}}
+  }
+  if(paused)return;
+  const elapsed=now-sceneStart;
+  const dur=scenes[currentIdx].duration||DURATION;
+  const t=Math.min(elapsed/dur,1);
+  // Animate current
+  if(currRefs){
+    scenes[currentIdx].animate(t,currRefs);
+  }
+  // Progress bar
+  progressEl.style.width=(t*100)+'%';
+  // Auto-advance
+  if(t>=1&&autoAdvance&&!inTransition){
+    const nextIdx=(currentIdx+1)%scenes.length;
+    setTimeout(()=>{if(!paused)switchTo(nextIdx);},1200);
+    sceneStart=now+99999; // Prevent re-trigger
+  }
+}
+
+// ─── Controls ───
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight')switchTo((currentIdx+1)%scenes.length);
+  else if(e.key==='ArrowLeft')switchTo((currentIdx-1+scenes.length)%scenes.length);
+  else if(e.key===' '){e.preventDefault();paused=!paused;if(!paused)sceneStart=performance.now();}
+  else if(e.key==='='){window.location.href='index.html';}
+});
+
+// ─── Start ───
+switchTo(0);
+scheduleLoop();
+// Fallback timer for environments where rAF may not fire (headless, bg tabs)
+setInterval(()=>loop(performance.now()),50);
+</script>
+</body></html>
